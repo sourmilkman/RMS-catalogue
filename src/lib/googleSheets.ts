@@ -1,6 +1,7 @@
 import type { ExportRow } from './exportDocx'
 
-const CLIENT_ID_KEY = 'rms-google-client-id'
+export const GOOGLE_CLIENT_ID = '38381535365-kus1f8dgi5pn9c0v9j6r89nvmrtnun20.apps.googleusercontent.com'
+export const CLIENT_ID_KEY = 'rms-google-client-id'
 const SPREADSHEET_ID_KEY = 'rms-google-backup-spreadsheet-id'
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/drive.file'
 
@@ -10,6 +11,14 @@ declare global {
 
 function clientId(): string | undefined {
   return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem(CLIENT_ID_KEY) || undefined
+}
+
+export function saveGoogleClientId(): void {
+  localStorage.setItem(CLIENT_ID_KEY, GOOGLE_CLIENT_ID)
+}
+
+export function hasGoogleClientId(): boolean {
+  return Boolean(clientId())
 }
 
 async function loadGoogleIdentity(): Promise<void> {

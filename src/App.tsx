@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, Download, ExternalLink,
-  FileSpreadsheet, ImageOff, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
+  AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
+  FileSpreadsheet, ImageOff, KeyRound, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
+import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -72,6 +73,7 @@ export default function App() {
   const [lightbox, setLightbox] = useState<ArtworkSubmission>()
   const [exporting, setExporting] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
+  const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
   const initialExpansion = useRef(false)
   const artists = useMemo(() => catalogue.source?.artists ?? [], [catalogue.source])
 
@@ -143,7 +145,6 @@ export default function App() {
     setExporting(true)
     try {
       const { downloadCatalogueDocx, getExportRows } = await import('./lib/exportDocx')
-      const { exportBackupSheet, validateRNumbers } = await import('./lib/googleSheets')
       const rows = getExportRows(artists, catalogue.decisions, catalogue.overrides)
       const rNumberError = validateRNumbers(rows)
       if (rNumberError) { window.alert(rNumberError); return }
@@ -156,6 +157,20 @@ export default function App() {
       window.alert(caught instanceof Error ? caught.message : 'Export failed.')
     }
     finally { setExporting(false) }
+  }
+
+  const copyGoogleClientId = async () => {
+    try {
+      await navigator.clipboard.writeText(GOOGLE_CLIENT_ID)
+      setGoogleSetupMessage('Client ID copied.')
+    } catch {
+      setGoogleSetupMessage('Copy failed. Use “Paste / save Client ID” instead.')
+    }
+  }
+
+  const useGoogleClientId = () => {
+    saveGoogleClientId()
+    setGoogleSetupMessage('Client ID saved on this device. You are ready to export.')
   }
 
   return (
@@ -205,6 +220,20 @@ export default function App() {
             <button onClick={() => bulkVerdict('no', 'excluded')}>Exclude displayed No</button>
             <button onClick={() => setExpanded(new Set(visibleArtists.map(({ artist }) => artist.id)))}>Expand displayed</button>
             <button onClick={() => setExpanded(new Set())}>Collapse all</button>
+          </div>
+          <div className="google-setup">
+            <div className="google-setup-title"><KeyRound size={15} /><h2>Google Sheet setup</h2></div>
+            <p>For the RMS secretary:</p>
+            <ol>
+              <li>On each device, select <strong>Paste / save Client ID</strong> once.</li>
+              <li>Select <strong>Export Word + Sheet</strong>.</li>
+              <li>Sign in as <strong>cmhucker@gmail.com</strong> and allow access.</li>
+            </ol>
+            <div className="google-setup-actions">
+              <button onClick={useGoogleClientId}><KeyRound size={14} />Paste / save Client ID</button>
+              <button onClick={() => void copyGoogleClientId()}><ClipboardCopy size={14} />Copy Client ID</button>
+            </div>
+            {googleSetupMessage && <p className="google-setup-status" role="status"><Check size={13} />{googleSetupMessage}</p>}
           </div>
           <button className="reset-button" onClick={() => void reset()}><RotateCcw size={15} />Reset catalogue decisions</button>
         </aside>
