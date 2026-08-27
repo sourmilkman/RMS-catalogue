@@ -10,7 +10,7 @@ function cleanHeader(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ')
 }
 
-function findColumns(headers: string[]): { email?: number; name?: number; dob?: number; artworks: ArtworkColumns[] } {
+function findColumns(headers: string[]): { email?: number; name?: number; dob?: number; age?: number; artworks: ArtworkColumns[] } {
   const normalised = headers.map(cleanHeader)
   const groups = new Map<number, ArtworkColumns>()
   const ensure = (position: number) => {
@@ -34,6 +34,7 @@ function findColumns(headers: string[]): { email?: number; name?: number; dob?: 
     email: normalised.indexOf('email') >= 0 ? normalised.indexOf('email') : undefined,
     name: normalised.indexOf('name') >= 0 ? normalised.indexOf('name') : undefined,
     dob: normalised.indexOf('date of birth') >= 0 ? normalised.indexOf('date of birth') : undefined,
+    age: normalised.findIndex((header) => /^age\b/.test(header)) >= 0 ? normalised.findIndex((header) => /^age\b/.test(header)) : undefined,
     artworks: [...groups.values()].sort((a, b) => a.position - b.position),
   }
 }
@@ -55,6 +56,9 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
     const fullName = cell(row, columns.name)
     const email = cell(row, columns.email)
     const dateOfBirth = cell(row, columns.dob)
+    const ageValue = cell(row, columns.age)
+    const parsedAge = Number.parseInt(ageValue, 10)
+    const youngArtistAge = /^\d+$/.test(ageValue) && parsedAge >= 0 && parsedAge <= 120 ? parsedAge : undefined
     const hasArtworkData = columns.artworks.some((group) => [group.image, group.title, group.medium, group.votes].some((index) => cell(row, index)))
     if (!fullName && !email && !hasArtworkData) return
 
@@ -65,7 +69,7 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
     const name = splitName(fullName)
     const artistWarnings: DataWarning[] = []
     if (!email) artistWarnings.push({ code: 'missing-email', message: 'Missing email address' })
-    if (!dateOfBirth) artistWarnings.push({ code: 'missing-dob', message: 'Missing date of birth' })
+    if (ageValue && youngArtistAge === undefined) artistWarnings.push({ code: 'invalid-age', message: 'Young Artist age needs review' })
     if (name.suspicious) artistWarnings.push({ code: 'name-review', message: 'Name split needs review' })
     if (occurrence > 1) artistWarnings.push({ code: 'duplicate-row', message: 'Duplicate-looking or continuation row' })
 
@@ -88,7 +92,7 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
       return [{ id, artistId, position: group.position, imageUrl: imageUrl || undefined, title, medium: medium || undefined, votes, verdict: calculateVerdict(votes), warnings }]
     })
 
-    artists.push({ id: artistId, sourceRow: rowIndex + 2, fullName, firstName: name.firstName, surname: name.surname, email: email || undefined, dateOfBirth: dateOfBirth || undefined, artworks, warnings: artistWarnings })
+    artists.push({ id: artistId, sourceRow: rowIndex + 2, fullName, firstName: name.firstName, surname: name.surname, email: email || undefined, dateOfBirth: dateOfBirth || undefined, youngArtistAge, artworks, warnings: artistWarnings })
   })
 
   const seenArtwork = new Map<string, string>()

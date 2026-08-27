@@ -35,6 +35,7 @@ export interface ArtistSubmission {
   surname: string
   email?: string
   dateOfBirth?: string
+  youngArtistAge?: number
   artworks: ArtworkSubmission[]
   warnings: DataWarning[]
 }

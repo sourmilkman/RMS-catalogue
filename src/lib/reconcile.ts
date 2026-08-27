@@ -21,6 +21,7 @@ function fieldChanges(previous: ArtistSubmission['artworks'][number], next: Arti
   if (previousArtist.fullName !== nextArtist.fullName) changed.push('artist name')
   if (previousArtist.email !== nextArtist.email) changed.push('email')
   if (previousArtist.dateOfBirth !== nextArtist.dateOfBirth) changed.push('DOB')
+  if (previousArtist.youngArtistAge !== nextArtist.youngArtistAge) changed.push('Young Artist age')
   return changed
 }
 

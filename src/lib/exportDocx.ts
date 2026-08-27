@@ -46,7 +46,11 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
         emitted.add(field)
         return value
       }
-      const dobYoung = [artist.dateOfBirth, override?.youngArtist ? 'Young Artist' : ''].filter(Boolean).join(' · ')
+      const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
+      const youngArtistLabel = artist.youngArtistAge !== undefined
+        ? `${isYoungArtist ? 'Young Artist · ' : ''}Age ${artist.youngArtistAge}`
+        : isYoungArtist ? 'Young Artist' : ''
+      const dobYoung = [artist.dateOfBirth, youngArtistLabel].filter(Boolean).join(' · ')
       return [{
         artistId: artist.id,
         artworkId: artwork.id,

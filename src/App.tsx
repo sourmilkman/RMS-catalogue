@@ -15,7 +15,7 @@ const FIELD_LABELS: Record<ExportField, string> = {
 const FILTERS = [
   ['included', 'Included'], ['excluded', 'Excluded'], ['undecided', 'Undecided'],
   ['yes', 'Yes verdict'], ['maybe', 'Maybe verdict'], ['no', 'No verdict'], ['tie', 'Tie'],
-  ['young', 'Young Artist'], ['missing-image', 'Missing image'], ['missing-dob', 'Missing DOB'],
+  ['young', 'Young Artist'], ['missing-image', 'Missing image'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
 
@@ -56,7 +56,6 @@ function matchesArtworkFilters(
   if (verdictFilters.length && !verdictFilters.includes(artwork.verdict)) return false
   if (filters.has('young') && !youngArtist) return false
   if (filters.has('missing-image') && artwork.imageUrl) return false
-  if (filters.has('missing-dob') && artist.dateOfBirth) return false
   if (filters.has('missing-email') && artist.email) return false
   if (filters.has('missing-votes') && artwork.votes.valid) return false
   return true
@@ -84,14 +83,15 @@ export default function App() {
     return artists.flatMap((artist) => {
       const override = catalogue.overrides[artist.id]
       const artistMatches = [artist.fullName, artist.email, override?.firstName, override?.surname].some((value) => value?.toLocaleLowerCase().includes(needle))
+      const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
       const artworks = artist.artworks.filter((artwork) => {
         const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle)
-        return searchMatches && matchesArtworkFilters(artist, artwork, catalogue.decisions[artwork.id]?.decision, override?.youngArtist ?? false, filters)
+        return searchMatches && matchesArtworkFilters(artist, artwork, catalogue.decisions[artwork.id]?.decision, isYoungArtist, filters)
       })
       if (artworks.length) return [{ artist, artworks }]
       if (artist.artworks.length) return []
       const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-votes']
-      const sourceFiltersMatch = (!filters.has('young') || override?.youngArtist) && (!filters.has('missing-dob') || !artist.dateOfBirth) && (!filters.has('missing-email') || !artist.email)
+      const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email)
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
     }).sort((a, b) => {
       if (a.artworks.length === 0 && b.artworks.length > 0) return 1
@@ -202,6 +202,7 @@ export default function App() {
           <div className="artist-list">
             {visibleArtists.map(({ artist, artworks }) => {
               const override = catalogue.overrides[artist.id]
+              const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
               const isExpanded = expanded.has(artist.id)
               const includedCount = artist.artworks.filter((artwork) => catalogue.decisions[artwork.id]?.decision === 'included').length
               const warningCount = artist.warnings.length + artist.artworks.reduce((sum, artwork) => sum + artwork.warnings.length, 0)
@@ -214,10 +215,10 @@ export default function App() {
                         <label><span>First Name</span><input value={override?.firstName ?? artist.firstName} onChange={(event) => catalogue.setArtistOverride(artist.id, { firstName: event.target.value })} /></label>
                         <label><span>Surname</span><input value={override?.surname ?? artist.surname} onChange={(event) => catalogue.setArtistOverride(artist.id, { surname: event.target.value })} /></label>
                       </div>
-                      <p>Original: {artist.fullName || 'Not supplied'} · {artist.email || 'No email'} · DOB {artist.dateOfBirth || 'not supplied'}</p>
+                      <p>{[ `Original: ${artist.fullName || 'Not supplied'}`, artist.email || 'No email', artist.youngArtistAge !== undefined ? `Young Artist age ${artist.youngArtistAge}` : artist.dateOfBirth ? `DOB ${artist.dateOfBirth}` : '' ].filter(Boolean).join(' · ')}</p>
                     </div>
                     <div className="artist-meta">
-                      <label className={`young-toggle ${override?.youngArtist ? 'active' : ''}`}><input type="checkbox" checked={override?.youngArtist ?? false} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist</label>
+                      <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
                       <span>{artist.artworks.length} submitted · {includedCount} included</span>
                       {warningCount > 0 && <span className="warning-count"><AlertTriangle size={14} />{warningCount} warning{warningCount === 1 ? '' : 's'}</span>}
                     </div>
