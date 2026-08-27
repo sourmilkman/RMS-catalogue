@@ -17,8 +17,10 @@ import {
 } from 'docx'
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision, Verdict } from '../types'
 import { isValidHttpUrl } from './identity'
+import { capitaliseName } from './names'
 
 export interface ExportRow {
+  rNumber: string
   artistId: string
   artworkId: string
   firstName: string
@@ -54,8 +56,9 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
       return [{
         artistId: artist.id,
         artworkId: artwork.id,
-        firstName: once('firstName', override?.firstName ?? artist.firstName),
-        surname: once('surname', override?.surname ?? artist.surname),
+        rNumber: state.rNumber ?? '',
+        firstName: once('firstName', capitaliseName(override?.firstName ?? artist.firstName)),
+        surname: once('surname', capitaliseName(override?.surname ?? artist.surname)),
         title: state.fields.title ? artwork.title : '',
         yes: artwork.votes.yes,
         no: artwork.votes.no,
@@ -70,7 +73,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
   })
 }
 
-const widths = [1500, 1600, 3500, 550, 550, 550, 2600, 2000, 1750]
+const widths = [800, 1400, 1500, 3300, 500, 500, 500, 2450, 1900, 1750]
 const borders = { style: BorderStyle.SINGLE, size: 4, color: '8A9391' }
 
 function cell(text: string, width: number, options: { fill?: string; bold?: boolean; align?: typeof AlignmentType.CENTER } = {}): TableCell {
@@ -95,7 +98,7 @@ function downloadCell(row: ExportRow): TableCell {
       spacing: { before: 0, after: 0 },
       alignment: AlignmentType.CENTER,
       children: valid
-        ? [new ExternalHyperlink({ link: row.imageUrl!, children: [new TextRun({ text: 'Download image', style: 'Hyperlink', font: 'Aptos', size: 18 })] })]
+        ? [new ExternalHyperlink({ link: new URL(row.imageUrl!).href, children: [new TextRun({ text: 'Download image', style: 'Hyperlink', font: 'Aptos', size: 18 })] })]
         : [new TextRun({ text: row.includeDownload ? 'No image URL' : '', font: 'Aptos', size: 18 })],
     })],
   })
@@ -109,18 +112,19 @@ function voteFill(verdict: Verdict, column: 'yes' | 'no' | 'maybe'): string | un
 
 export async function createCatalogueDocx(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>): Promise<Blob> {
   const rows = getExportRows(artists, decisions, overrides)
-  const headers = ['First Name', 'Surname', 'Title', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
+  const headers = ['R No.', 'First Name', 'Surname', 'Title', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
   const tableRows = [
     new TableRow({ tableHeader: true, children: headers.map((header, index) => cell(header, widths[index], { fill: '465154', bold: true, align: AlignmentType.CENTER })) }),
     ...rows.map((row) => new TableRow({ children: [
-      cell(row.firstName, widths[0]),
-      cell(row.surname, widths[1]),
-      cell(row.title, widths[2]),
-      cell(String(row.yes), widths[3], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
-      cell(String(row.no), widths[4], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
-      cell(String(row.maybe), widths[5], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
-      cell(row.email, widths[6]),
-      cell(row.dobYoungArtist, widths[7]),
+      cell(row.rNumber, widths[0], { bold: true, align: AlignmentType.CENTER }),
+      cell(row.firstName, widths[1]),
+      cell(row.surname, widths[2]),
+      cell(row.title, widths[3]),
+      cell(String(row.yes), widths[4], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
+      cell(String(row.no), widths[5], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
+      cell(String(row.maybe), widths[6], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
+      cell(row.email, widths[7]),
+      cell(row.dobYoungArtist, widths[8]),
       downloadCell(row),
     ] })),
   ]
@@ -131,8 +135,9 @@ export async function createCatalogueDocx(artists: ArtistSubmission[], decisions
     sections: [{
       properties: {
         page: {
-          size: { orientation: PageOrientation.LANDSCAPE, width: 15840, height: 12240 },
-          margin: { top: 720, right: 720, bottom: 720, left: 720 },
+          // docx swaps these portrait dimensions when landscape is selected.
+          size: { orientation: PageOrientation.LANDSCAPE, width: 12240, height: 15840 },
+          margin: { top: 576, right: 576, bottom: 576, left: 576 },
         },
       },
       children: [

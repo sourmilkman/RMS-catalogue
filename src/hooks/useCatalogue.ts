@@ -100,6 +100,18 @@ export function useCatalogue() {
     })
   }, [])
 
+  const setRNumber = useCallback((artworkId: string, rNumber: string) => {
+    setDecisions((current) => {
+      const existing = current[artworkId]
+      if (!existing) return current
+      const nextItem = { ...existing, rNumber: rNumber.toLocaleUpperCase().replace(/\s+/g, '') }
+      const next = { ...current, [artworkId]: nextItem }
+      decisionsRef.current = next
+      void db.decisions.put(nextItem)
+      return next
+    })
+  }, [])
+
   const setArtistOverride = useCallback((artistId: string, patch: Partial<ArtistOverride>) => {
     const artist = sourceRef.current?.artists.find((item) => item.id === artistId)
     if (!artist) return
@@ -129,5 +141,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, setDecision, setField, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
 }

@@ -50,6 +50,7 @@ export interface ArtworkDecision {
   artworkId: string
   decision: CatalogueDecision
   manual: boolean
+  rNumber: string
   fields: Record<ExportField, boolean>
 }
 

@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, Download, ExternalLink,
-  ImageOff, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
+  FileSpreadsheet, ImageOff, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
+import { capitaliseName } from './lib/names'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -68,6 +69,7 @@ export default function App() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<ArtworkSubmission>()
   const [exporting, setExporting] = useState(false)
+  const [backupUrl, setBackupUrl] = useState<string>()
   const initialExpansion = useRef(false)
   const artists = useMemo(() => catalogue.source?.artists ?? [], [catalogue.source])
 
@@ -131,12 +133,22 @@ export default function App() {
     await catalogue.resetDecisions()
   }
 
-  const exportWord = async () => {
+  const exportSelection = async () => {
     if (!counts.included) { window.alert('Include at least one artwork before exporting.'); return }
     setExporting(true)
     try {
-      const { downloadCatalogueDocx } = await import('./lib/exportDocx')
-      await downloadCatalogueDocx(artists, catalogue.decisions, catalogue.overrides)
+      const { downloadCatalogueDocx, getExportRows } = await import('./lib/exportDocx')
+      const { exportBackupSheet, validateRNumbers } = await import('./lib/googleSheets')
+      const rows = getExportRows(artists, catalogue.decisions, catalogue.overrides)
+      const rNumberError = validateRNumbers(rows)
+      if (rNumberError) { window.alert(rNumberError); return }
+      const [, url] = await Promise.all([
+        downloadCatalogueDocx(artists, catalogue.decisions, catalogue.overrides),
+        exportBackupSheet(rows),
+      ])
+      setBackupUrl(url)
+    } catch (caught) {
+      window.alert(caught instanceof Error ? caught.message : 'Export failed.')
     }
     finally { setExporting(false) }
   }
@@ -153,8 +165,8 @@ export default function App() {
           <button className="button secondary" onClick={() => void catalogue.refresh()} disabled={catalogue.syncing}>
             <RefreshCw size={17} className={catalogue.syncing ? 'spin' : ''} />{catalogue.syncing ? 'Synchronising…' : 'Refresh from Google Sheet'}
           </button>
-          <button className="button primary" onClick={() => void exportWord()} disabled={exporting || !counts.included}>
-            <Download size={17} />{exporting ? 'Creating Word file…' : 'Export Word'}
+          <button className="button primary" onClick={() => void exportSelection()} disabled={exporting || !counts.included}>
+            <Download size={17} />{exporting ? 'Exporting…' : 'Export Word + Sheet'}
           </button>
         </div>
       </header>
@@ -162,6 +174,7 @@ export default function App() {
       {!catalogue.online && <div className="offline-banner"><AlertTriangle size={17} />Offline — showing data {formatSync(catalogue.source?.syncedAt).toLocaleLowerCase()}</div>}
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
+      {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
 
       <section className="summary" aria-label="Catalogue summary">
         <div><span>Artists</span><strong>{artists.length}</strong></div>
@@ -212,8 +225,8 @@ export default function App() {
                     <button className="collapse-button" onClick={() => toggleArtist(artist.id)} aria-expanded={isExpanded}>{isExpanded ? <ChevronDown /> : <ChevronRight />}</button>
                     <div className="artist-identity">
                       <div className="name-editors">
-                        <label><span>First Name</span><input value={override?.firstName ?? artist.firstName} onChange={(event) => catalogue.setArtistOverride(artist.id, { firstName: event.target.value })} /></label>
-                        <label><span>Surname</span><input value={override?.surname ?? artist.surname} onChange={(event) => catalogue.setArtistOverride(artist.id, { surname: event.target.value })} /></label>
+                        <label><span>First Name</span><input value={override?.firstName ?? artist.firstName} onChange={(event) => catalogue.setArtistOverride(artist.id, { firstName: event.target.value })} onBlur={(event) => catalogue.setArtistOverride(artist.id, { firstName: capitaliseName(event.target.value) })} /></label>
+                        <label><span>Surname</span><input value={override?.surname ?? artist.surname} onChange={(event) => catalogue.setArtistOverride(artist.id, { surname: event.target.value })} onBlur={(event) => catalogue.setArtistOverride(artist.id, { surname: capitaliseName(event.target.value) })} /></label>
                       </div>
                       <p>{[ `Original: ${artist.fullName || 'Not supplied'}`, artist.email || 'No email', artist.youngArtistAge !== undefined ? `Young Artist age ${artist.youngArtistAge}` : artist.dateOfBirth ? `DOB ${artist.dateOfBirth}` : '' ].filter(Boolean).join(' · ')}</p>
                     </div>
@@ -240,6 +253,7 @@ export default function App() {
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
                             <p className="medium">{artwork.medium || 'Medium not supplied'} · Artwork {artwork.position}</p>
+                            <label className="r-number"><span>R number</span><input value={state?.rNumber ?? ''} placeholder="R225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
 

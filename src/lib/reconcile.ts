@@ -8,6 +8,7 @@ export function defaultDecision(verdict: ArtistSubmission['artworks'][number]['v
     artworkId,
     decision: verdict === 'yes' ? 'included' : verdict === 'no' ? 'excluded' : 'undecided',
     manual: false,
+    rNumber: '',
     fields: Object.fromEntries(EXPORT_FIELDS.map((field) => [field, true])) as Record<ExportField, boolean>,
   }
 }
