@@ -54,14 +54,20 @@ async function request<T>(url: string, token: string, init?: RequestInit): Promi
   return response.json() as Promise<T>
 }
 
+async function findBackupSpreadsheet(token: string): Promise<string | undefined> {
+  const name = encodeURIComponent("name = 'RMS Catalogue Selection Backup' and trashed = false")
+  const found = await request<{ files: { id: string }[] }>(`https://www.googleapis.com/drive/v3/files?q=${name}&orderBy=createdTime%20desc&pageSize=1&fields=files(id)`, token)
+  return found.files[0]?.id
+}
+
 export async function exportBackupSheet(rows: ExportRow[]): Promise<string> {
   const token = await accessToken()
-  let spreadsheetId = localStorage.getItem(SPREADSHEET_ID_KEY)
+  let spreadsheetId = localStorage.getItem(SPREADSHEET_ID_KEY) || await findBackupSpreadsheet(token)
   if (!spreadsheetId) {
     const created = await request<{ spreadsheetId: string; spreadsheetUrl: string }>('https://sheets.googleapis.com/v4/spreadsheets', token, { method: 'POST', body: JSON.stringify({ properties: { title: 'RMS Catalogue Selection Backup' }, sheets: [{ properties: { title: 'Selection' } }] }) })
     spreadsheetId = created.spreadsheetId
-    localStorage.setItem(SPREADSHEET_ID_KEY, spreadsheetId)
   }
+  localStorage.setItem(SPREADSHEET_ID_KEY, spreadsheetId)
   try {
     await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Selection:clear`, token, { method: 'POST', body: '{}' })
     await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Selection!A1`, token, { method: 'PUT', body: JSON.stringify({ range: 'Selection!A1', majorDimension: 'ROWS', values: backupValues(rows) }) })
