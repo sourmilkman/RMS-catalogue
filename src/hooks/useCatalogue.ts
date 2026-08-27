@@ -104,7 +104,7 @@ export function useCatalogue() {
     setDecisions((current) => {
       const existing = current[artworkId]
       if (!existing) return current
-      const nextItem = { ...existing, rNumber: rNumber.toLocaleUpperCase().replace(/\s+/g, '') }
+      const nextItem = { ...existing, rNumber: rNumber.replace(/\D/g, '') }
       const next = { ...current, [artworkId]: nextItem }
       decisionsRef.current = next
       void db.decisions.put(nextItem)

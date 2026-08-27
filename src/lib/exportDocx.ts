@@ -56,7 +56,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
       return [{
         artistId: artist.id,
         artworkId: artwork.id,
-        rNumber: state.rNumber ?? '',
+        rNumber: state.rNumber?.replace(/\D/g, '') ? `R${state.rNumber.replace(/\D/g, '')}` : '',
         firstName: once('firstName', capitaliseName(override?.firstName ?? artist.firstName)),
         surname: once('surname', capitaliseName(override?.surname ?? artist.surname)),
         title: state.fields.title ? artwork.title : '',

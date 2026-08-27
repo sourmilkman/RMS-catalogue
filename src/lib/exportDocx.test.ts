@@ -36,7 +36,12 @@ describe('DOCX row selection', () => {
   it('requires a unique, manual R number for every export row', () => {
     const rows = getExportRows([artist], { included: { ...defaultDecision('yes', 'included'), rNumber: 'R225' } }, {})
     expect(validateRNumbers(rows)).toBeUndefined()
-    expect(validateRNumbers([{ ...rows[0], rNumber: '' }])).toContain('needs a unique R number')
+    expect(validateRNumbers([{ ...rows[0], rNumber: '' }])).toBeUndefined()
     expect(validateRNumbers([...rows, { ...rows[0] }])).toContain('R225 is used more than once')
+  })
+
+  it('adds the R prefix in exports when only digits are entered', () => {
+    const rows = getExportRows([artist], { included: { ...defaultDecision('yes', 'included'), rNumber: '225' } }, {})
+    expect(rows[0].rNumber).toBe('R225')
   })
 })

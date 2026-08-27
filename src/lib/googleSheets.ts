@@ -79,8 +79,7 @@ export async function exportBackupSheet(rows: ExportRow[]): Promise<string> {
 }
 
 export function validateRNumbers(rows: ExportRow[]): string | undefined {
-  const missing = rows.filter((row) => !/^R\d+$/i.test(row.rNumber)).length
-  if (missing) return `${missing} included artwork${missing === 1 ? ' needs' : 's need'} a unique R number in the format R225.`
-  const duplicate = rows.map((row) => row.rNumber.toLocaleUpperCase()).find((value, index, values) => values.indexOf(value) !== index)
+  const entered = rows.map((row) => row.rNumber.toLocaleUpperCase()).filter(Boolean)
+  const duplicate = entered.find((value, index, values) => values.indexOf(value) !== index)
   return duplicate ? `${duplicate} is used more than once. R numbers must be unique.` : undefined
 }

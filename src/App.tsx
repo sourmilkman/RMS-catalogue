@@ -16,7 +16,7 @@ const FIELD_LABELS: Record<ExportField, string> = {
 const FILTERS = [
   ['included', 'Included'], ['excluded', 'Excluded'], ['undecided', 'Undecided'],
   ['yes', 'Yes verdict'], ['maybe', 'Maybe verdict'], ['no', 'No verdict'], ['tie', 'Tie'],
-  ['young', 'Young Artist'], ['missing-image', 'Missing image'],
+  ['young', 'Young Artist'], ['missing-image', 'Missing image'], ['missing-r', 'Missing R number'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
 
@@ -49,6 +49,7 @@ function matchesArtworkFilters(
   artwork: ArtworkSubmission,
   decision: CatalogueDecision | undefined,
   youngArtist: boolean,
+  rNumber: string,
   filters: Set<string>,
 ): boolean {
   const decisionFilters = ['included', 'excluded', 'undecided'].filter((filter) => filters.has(filter))
@@ -57,6 +58,7 @@ function matchesArtworkFilters(
   if (verdictFilters.length && !verdictFilters.includes(artwork.verdict)) return false
   if (filters.has('young') && !youngArtist) return false
   if (filters.has('missing-image') && artwork.imageUrl) return false
+  if (filters.has('missing-r') && (decision !== 'included' || /\d/.test(rNumber))) return false
   if (filters.has('missing-email') && artist.email) return false
   if (filters.has('missing-votes') && artwork.votes.valid) return false
   return true
@@ -87,12 +89,14 @@ export default function App() {
       const artistMatches = [artist.fullName, artist.email, override?.firstName, override?.surname].some((value) => value?.toLocaleLowerCase().includes(needle))
       const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
       const artworks = artist.artworks.filter((artwork) => {
-        const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle)
-        return searchMatches && matchesArtworkFilters(artist, artwork, catalogue.decisions[artwork.id]?.decision, isYoungArtist, filters)
+        const state = catalogue.decisions[artwork.id]
+        const rDigits = state?.rNumber?.replace(/\D/g, '') ?? ''
+        const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle) || rDigits.includes(needle.replace(/^r/, ''))
+        return searchMatches && matchesArtworkFilters(artist, artwork, state?.decision, isYoungArtist, rDigits, filters)
       })
       if (artworks.length) return [{ artist, artworks }]
       if (artist.artworks.length) return []
-      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-votes']
+      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-r', 'missing-votes']
       const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email)
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
     }).sort((a, b) => {
@@ -108,6 +112,7 @@ export default function App() {
     current[decision] += 1
     return current
   }, { included: 0, excluded: 0, undecided: 0 })
+  const rNumbersRemaining = allArtworks.filter((artwork) => catalogue.decisions[artwork.id]?.decision === 'included' && !/\d/.test(catalogue.decisions[artwork.id]?.rNumber ?? '')).length
 
   const toggleFilter = (filter: string) => setFilters((current) => {
     const next = new Set(current)
@@ -182,6 +187,7 @@ export default function App() {
         <div className="included"><span>Included</span><strong>{counts.included}</strong></div>
         <div className="excluded"><span>Excluded</span><strong>{counts.excluded}</strong></div>
         <div className="undecided"><span>Undecided</span><strong>{counts.undecided}</strong></div>
+        <div className={rNumbersRemaining ? 'r-remaining' : 'included'}><span>R numbers remaining</span><strong>{rNumbersRemaining}</strong></div>
         <p className={`sync-state ${catalogue.error ? 'sync-error' : ''}`}><span className="sync-dot" />{catalogue.syncing ? 'Synchronising with Google Sheet…' : formatSync(catalogue.source?.syncedAt)}</p>
       </section>
 
@@ -253,7 +259,7 @@ export default function App() {
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
                             <p className="medium">{artwork.medium || 'Medium not supplied'} · Artwork {artwork.position}</p>
-                            <label className="r-number"><span>R number</span><input value={state?.rNumber ?? ''} placeholder="R225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></label>
+                            <label className="r-number"><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" pattern="[0-9]*" value={state?.rNumber?.replace(/\D/g, '') ?? ''} placeholder="225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
 
