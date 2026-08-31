@@ -3,6 +3,7 @@ import type { ArtistOverride, ArtworkDecision, CatalogueDecision, ExportField, S
 import { db } from '../lib/db'
 import { reconcileSource } from '../lib/reconcile'
 import { getRmsReviewData } from '../lib/sheet'
+import { applyLocalImages, assignLocalImage, carryLocalImages } from '../lib/imports'
 
 export function useCatalogue() {
   const [source, setSource] = useState<SourceSnapshot>()
@@ -20,12 +21,13 @@ export function useCatalogue() {
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { decisionsRef.current = decisions }, [decisions])
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
+    if (!force && sourceRef.current?.sourceLabel) return
     if (syncingRef.current) return
     syncingRef.current = true
     setSyncing(true)
     try {
-      const next = await getRmsReviewData()
+      const next = carryLocalImages(sourceRef.current, await getRmsReviewData())
       const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
       setSource(next)
       setDecisions(result.decisions)
@@ -88,6 +90,40 @@ export function useCatalogue() {
     })
   }, [])
 
+  const importSource = useCallback(async (incoming: SourceSnapshot) => {
+    const next = carryLocalImages(sourceRef.current, incoming)
+    const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
+    setSource(next)
+    sourceRef.current = next
+    setDecisions(result.decisions)
+    decisionsRef.current = result.decisions
+    setChanges(result.changes)
+    setRemovedCount(result.removedCount)
+    setError(undefined)
+    await db.transaction('rw', db.source, db.decisions, async () => {
+      await db.source.put(next)
+      await db.decisions.clear()
+      await db.decisions.bulkPut(Object.values(result.decisions))
+    })
+  }, [])
+
+  const importImages = useCallback(async (files: File[]) => {
+    if (!sourceRef.current) throw new Error('Import catalogue data before importing images.')
+    const result = applyLocalImages(sourceRef.current, files)
+    setSource(result.snapshot)
+    sourceRef.current = result.snapshot
+    await db.source.put(result.snapshot)
+    return { matched: result.matched, unmatched: result.unmatched }
+  }, [])
+
+  const setLocalImage = useCallback(async (artworkId: string, file: File) => {
+    if (!sourceRef.current) return
+    const next = assignLocalImage(sourceRef.current, artworkId, file)
+    setSource(next)
+    sourceRef.current = next
+    await db.source.put(next)
+  }, [])
+
   const setField = useCallback((artworkId: string, field: ExportField, included: boolean) => {
     setDecisions((current) => {
       const existing = current[artworkId]
@@ -141,5 +177,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
 }

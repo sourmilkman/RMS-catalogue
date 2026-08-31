@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
-  FileSpreadsheet, ImageOff, KeyRound, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
+  FileSpreadsheet, FileUp, FolderOpen, ImageOff, KeyRound, Link2, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
+import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -30,19 +31,31 @@ function verdictLabel(verdict: Verdict): string {
   return verdict === 'tie' ? 'TIE · NEEDS DECISION' : verdict.toUpperCase()
 }
 
+function useArtworkImage(artwork?: ArtworkSubmission): string | undefined {
+  const source = useMemo(() => artwork?.localImage ? URL.createObjectURL(artwork.localImage) : artwork?.imageUrl, [artwork])
+  useEffect(() => () => { if (artwork?.localImage && source) URL.revokeObjectURL(source) }, [artwork?.localImage, source])
+  return source
+}
+
 function ImagePreview({ artwork, onOpen }: { artwork: ArtworkSubmission; onOpen: () => void }) {
   const [loaded, setLoaded] = useState(false)
   const [broken, setBroken] = useState(false)
-  if (!artwork.imageUrl || broken) {
+  const source = useArtworkImage(artwork)
+  if (!source || broken) {
     return <div className="image-state"><ImageOff /><span>{broken ? 'Image could not be loaded' : 'No image supplied'}</span></div>
   }
   return (
     <button className={`artwork-image ${loaded ? 'loaded' : ''}`} onClick={onOpen} aria-label={`Enlarge ${artwork.title || 'artwork'}`}>
       {!loaded && <span className="image-skeleton" />}
-      <img src={artwork.imageUrl} alt={artwork.title || 'Submitted artwork'} loading="lazy" onLoad={() => setLoaded(true)} onError={() => setBroken(true)} />
+      <img key={source} src={source} alt={artwork.title || 'Submitted artwork'} loading="lazy" onLoad={() => setLoaded(true)} onError={() => setBroken(true)} />
       <span className="enlarge">Enlarge</span>
     </button>
   )
+}
+
+function LightboxImage({ artwork }: { artwork: ArtworkSubmission }) {
+  const source = useArtworkImage(artwork)
+  return <img src={source} alt={artwork.title || 'Submitted artwork'} />
 }
 
 function matchesArtworkFilters(
@@ -58,7 +71,7 @@ function matchesArtworkFilters(
   const verdictFilters = ['yes', 'maybe', 'no', 'tie'].filter((filter) => filters.has(filter))
   if (verdictFilters.length && !verdictFilters.includes(artwork.verdict)) return false
   if (filters.has('young') && !youngArtist) return false
-  if (filters.has('missing-image') && artwork.imageUrl) return false
+  if (filters.has('missing-image') && (artwork.imageUrl || artwork.localImage)) return false
   if (filters.has('missing-r') && (decision !== 'included' || /\d/.test(rNumber))) return false
   if (filters.has('missing-email') && artist.email) return false
   if (filters.has('missing-votes') && artwork.votes.valid) return false
@@ -74,7 +87,10 @@ export default function App() {
   const [exporting, setExporting] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
+  const [importNotice, setImportNotice] = useState<string>()
   const initialExpansion = useRef(false)
+  const spreadsheetInput = useRef<HTMLInputElement>(null)
+  const imagesInput = useRef<HTMLInputElement>(null)
   const artists = useMemo(() => catalogue.source?.artists ?? [], [catalogue.source])
 
   useEffect(() => {
@@ -83,6 +99,8 @@ export default function App() {
       initialExpansion.current = true
     }
   }, [artists])
+
+  useEffect(() => { imagesInput.current?.setAttribute('webkitdirectory', '') }, [])
 
   const visibleArtists = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase()
@@ -173,6 +191,37 @@ export default function App() {
     setGoogleSetupMessage('Client ID saved on this device. You are ready to export.')
   }
 
+  const confirmAndImport = async (next: NonNullable<typeof catalogue.source>) => {
+    const warning = importDifference(catalogue.source, next)
+    if (warning && !window.confirm(`${warning}\n\nMerge this import?`)) return
+    await catalogue.importSource(next)
+    setImportNotice(`Imported ${next.artists.length} artists and ${next.artists.reduce((sum, artist) => sum + artist.artworks.length, 0)} artworks. Existing decisions and R numbers were preserved where matched.`)
+  }
+
+  const importSpreadsheet = async (file?: File) => {
+    if (!file) return
+    try { await confirmAndImport(await parseSpreadsheetFile(file)) }
+    catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Spreadsheet import failed.') }
+    finally { if (spreadsheetInput.current) spreadsheetInput.current.value = '' }
+  }
+
+  const importSheetLink = async () => {
+    const link = window.prompt('Paste a public or link-accessible Google Sheets URL:')
+    if (!link) return
+    try { await confirmAndImport(await fetchGoogleSheet(link)) }
+    catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Google Sheets import failed.') }
+  }
+
+  const importImageFolder = async (files: FileList | null) => {
+    if (!files?.length) return
+    try {
+      const result = await catalogue.importImages([...files])
+      const unmatched = result.unmatched.length ? ` ${result.unmatched.length} unmatched: ${result.unmatched.slice(0, 5).join(', ')}${result.unmatched.length > 5 ? '…' : ''}` : ''
+      setImportNotice(`Matched and stored ${result.matched} local image${result.matched === 1 ? '' : 's'} for offline use.${unmatched}`)
+    } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Image import failed.') }
+    finally { if (imagesInput.current) imagesInput.current.value = '' }
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -182,7 +231,7 @@ export default function App() {
           <p className="build">Build {BUILD}</p>
         </div>
         <div className="header-actions">
-          <button className="button secondary" onClick={() => void catalogue.refresh()} disabled={catalogue.syncing}>
+          <button className="button secondary" onClick={() => void catalogue.refresh(true)} disabled={catalogue.syncing}>
             <RefreshCw size={17} className={catalogue.syncing ? 'spin' : ''} />{catalogue.syncing ? 'Synchronising…' : 'Refresh from Google Sheet'}
           </button>
           <button className="button primary" onClick={() => void exportSelection()} disabled={exporting || !counts.included}>
@@ -195,6 +244,7 @@ export default function App() {
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
       {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
+      {importNotice && <div className="change-banner import-banner"><Check size={17} /><span>{importNotice}</span><button onClick={() => setImportNotice(undefined)} aria-label="Dismiss import message"><X size={15} /></button></div>}
 
       <section className="summary" aria-label="Catalogue summary">
         <div><span>Artists</span><strong>{artists.length}</strong></div>
@@ -208,6 +258,16 @@ export default function App() {
 
       <section className="workspace">
         <aside className="filters-panel">
+          <div className="import-panel">
+            <div className="filter-title"><FileUp size={15} /><h2>Import offline data</h2></div>
+            <p>Merge another catalogue while preserving decisions and R numbers.</p>
+            <button onClick={() => spreadsheetInput.current?.click()}><FileUp size={14} />Import spreadsheet file</button>
+            <input ref={spreadsheetInput} className="visually-hidden" type="file" accept=".csv,.tsv,.txt,.html,.htm,.xls,.xlsx,.xlsm,.xlsb,.ods,.fods" onChange={(event) => void importSpreadsheet(event.target.files?.[0])} />
+            <button onClick={() => void importSheetLink()}><Link2 size={14} />Import Google Sheets link</button>
+            <button onClick={() => imagesInput.current?.click()}><FolderOpen size={14} />Import the images</button>
+            <input ref={imagesInput} className="visually-hidden" type="file" accept="image/*,.heic,.heif,.tif,.tiff" multiple onChange={(event) => void importImageFolder(event.target.files)} />
+            <small>Images are matched by spreadsheet filename, then artwork title, and stored on this device for offline use.</small>
+          </div>
           <label className="search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search artist or artwork" />{search && <button onClick={() => setSearch('')} aria-label="Clear search"><X size={15} /></button>}</label>
           <div className="filter-title"><SlidersHorizontal size={15} /><h2>Filter catalogue</h2></div>
           <div className="filter-list">
@@ -280,7 +340,7 @@ export default function App() {
                       const changed = catalogue.changes[artwork.id]
                       return (
                         <section className={`artwork-card decision-${decision}`} key={artwork.id}>
-                          <ImagePreview artwork={artwork} onOpen={() => setLightbox(artwork)} />
+                          <ImagePreview key={artwork.localImageName ?? artwork.imageUrl} artwork={artwork} onOpen={() => setLightbox(artwork)} />
                           <div className="artwork-details">
                             <div className="artwork-topline">
                               <span className={`vote verdict-${artwork.verdict}`}>{verdictLabel(artwork.verdict)} · Y {artwork.votes.yes} / N {artwork.votes.no} / M {artwork.votes.maybe}</span>
@@ -291,6 +351,7 @@ export default function App() {
                             <label className="r-number"><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" pattern="[0-9]*" value={state?.rNumber?.replace(/\D/g, '') ?? ''} placeholder="225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
+                            <label className="manual-image"><FolderOpen size={13} />{artwork.localImageName ? `Local: ${artwork.localImageName}` : 'Choose image manually'}<input type="file" accept="image/*,.heic,.heif,.tif,.tiff" onChange={(event) => { const file = event.target.files?.[0]; if (file) void catalogue.setLocalImage(artwork.id, file); event.target.value = '' }} /></label>
 
                             <div className="decision-row" role="group" aria-label={`Catalogue decision for ${artwork.title || 'artwork'}`}>
                               {(['included', 'excluded', 'undecided'] as CatalogueDecision[]).map((value) => <button className={decision === value ? 'selected' : ''} onClick={() => catalogue.setDecision(artwork.id, value)} key={value}>{value === 'included' ? 'Include' : value === 'excluded' ? 'Exclude' : 'Undecided'}</button>)}
@@ -319,7 +380,7 @@ export default function App() {
 
       {lightbox && <div className="lightbox" role="dialog" aria-modal="true" aria-label={lightbox.title || 'Artwork preview'} onClick={() => setLightbox(undefined)}>
         <button className="lightbox-close" onClick={() => setLightbox(undefined)} aria-label="Close preview"><X /></button>
-        <figure onClick={(event) => event.stopPropagation()}><img src={lightbox.imageUrl} alt={lightbox.title || 'Submitted artwork'} /><figcaption>{lightbox.title || 'Untitled artwork'}</figcaption></figure>
+        <figure onClick={(event) => event.stopPropagation()}><LightboxImage artwork={lightbox} /><figcaption>{lightbox.title || 'Untitled artwork'}</figcaption></figure>
       </div>}
     </main>
   )

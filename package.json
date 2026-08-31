@@ -1,7 +1,7 @@
 {
   "name": "rms-catalogue-selection",
   "private": true,
-  "version": "0.1.6",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -11,6 +11,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@e965/xlsx": "^0.20.3",
     "dexie": "^4.4.5",
     "docx": "^9.7.1",
     "lucide-react": "^1.34.0",

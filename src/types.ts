@@ -20,6 +20,8 @@ export interface ArtworkSubmission {
   artistId: string
   position: number
   imageUrl?: string
+  localImage?: Blob
+  localImageName?: string
   title: string
   medium?: string
   votes: Votes
@@ -43,6 +45,7 @@ export interface ArtistSubmission {
 export interface SourceSnapshot {
   id: 'latest'
   syncedAt: string
+  sourceLabel?: string
   artists: ArtistSubmission[]
 }
 
