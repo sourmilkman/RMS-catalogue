@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ArtistOverride, ArtworkDecision, CatalogueDecision, ExportField, SourceSnapshot } from '../types'
+import type { ArtistOverride, ArtistSubmission, ArtworkDecision, CatalogueDecision, ExportField, SourceSnapshot } from '../types'
 import { db } from '../lib/db'
 import { reconcileSource } from '../lib/reconcile'
 import { getRmsReviewData } from '../lib/sheet'
@@ -27,7 +27,9 @@ export function useCatalogue() {
     syncingRef.current = true
     setSyncing(true)
     try {
-      const next = carryLocalImages(sourceRef.current, await getRmsReviewData())
+      const fetched = await getRmsReviewData()
+      fetched.artists.push(...(sourceRef.current?.artists.filter((artist) => artist.locallyAdded) ?? []))
+      const next = carryLocalImages(sourceRef.current, fetched)
       const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
       setSource(next)
       setDecisions(result.decisions)
@@ -91,6 +93,8 @@ export function useCatalogue() {
   }, [])
 
   const importSource = useCallback(async (incoming: SourceSnapshot) => {
+    const incomingIds = new Set(incoming.artists.map((artist) => artist.id))
+    incoming.artists.push(...(sourceRef.current?.artists.filter((artist) => artist.locallyAdded && !incomingIds.has(artist.id)) ?? []))
     const next = carryLocalImages(sourceRef.current, incoming)
     const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
     setSource(next)
@@ -122,6 +126,30 @@ export function useCatalogue() {
     setSource(next)
     sourceRef.current = next
     await db.source.put(next)
+  }, [])
+
+  const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision' | 'rNumber'>>) => {
+    const current = sourceRef.current ?? { id: 'latest' as const, syncedAt: new Date().toISOString(), artists: [] }
+    const next = { ...current, syncedAt: new Date().toISOString(), artists: [...current.artists, artist] }
+    const nextDecisions = { ...decisionsRef.current }
+    for (const artwork of artist.artworks) {
+      const seed = initial[artwork.id]
+      nextDecisions[artwork.id] = {
+        artworkId: artwork.id,
+        decision: seed?.decision ?? 'undecided',
+        manual: true,
+        rNumber: seed?.rNumber?.replace(/\D/g, '') ?? '',
+        fields: { firstName: true, surname: true, title: true, email: true, dob: true, download: true },
+      }
+    }
+    setSource(next)
+    sourceRef.current = next
+    setDecisions(nextDecisions)
+    decisionsRef.current = nextDecisions
+    await db.transaction('rw', db.source, db.decisions, async () => {
+      await db.source.put(next)
+      await db.decisions.bulkPut(artist.artworks.map((artwork) => nextDecisions[artwork.id]))
+    })
   }, [])
 
   const setField = useCallback((artworkId: string, field: ExportField, included: boolean) => {
@@ -177,5 +205,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, addLocalArtist, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
 }

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
-  FileSpreadsheet, FileUp, FolderOpen, ImageOff, KeyRound, Link2, RefreshCw, RotateCcw, Search, SlidersHorizontal, X,
+  Camera, FileSpreadsheet, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
@@ -9,18 +9,21 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
-import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, Verdict } from './types'
+import { blankEntry, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
+import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
 const FIELD_LABELS: Record<ExportField, string> = {
   firstName: 'First Name', surname: 'Surname', title: 'Title', email: 'Email', dob: 'DOB / Young Artist', download: 'Download Image',
 }
 const FILTERS = [
+  ['rms-member', 'RMS Members'], ['associate-member', 'Associate Members'], ['non-member', 'Non-members'],
   ['included', 'Included'], ['excluded', 'Excluded'], ['undecided', 'Undecided'],
   ['yes', 'Yes verdict'], ['maybe', 'Maybe verdict'], ['no', 'No verdict'], ['tie', 'Tie'],
   ['young', 'Young Artist'], ['missing-image', 'Missing image'], ['missing-r', 'Missing R number'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
+const MEMBERSHIP_LABELS: Record<MembershipType, string> = { 'rms-member': 'RMS Member', 'associate-member': 'Associate Member', 'non-member': 'Non-member' }
 
 function formatSync(value?: string): string {
   if (!value) return 'Not yet synced'
@@ -66,6 +69,8 @@ function matchesArtworkFilters(
   rNumber: string,
   filters: Set<string>,
 ): boolean {
+  const membershipFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
+  if (membershipFilters.length && !membershipFilters.includes(artist.membershipType ?? 'non-member')) return false
   const decisionFilters = ['included', 'excluded', 'undecided'].filter((filter) => filters.has(filter))
   if (decisionFilters.length && !decisionFilters.includes(decision ?? 'undecided')) return false
   const verdictFilters = ['yes', 'maybe', 'no', 'tie'].filter((filter) => filters.has(filter))
@@ -91,6 +96,14 @@ export default function App() {
   const initialExpansion = useRef(false)
   const spreadsheetInput = useRef<HTMLInputElement>(null)
   const imagesInput = useRef<HTMLInputElement>(null)
+  const entryFormInput = useRef<HTMLInputElement>(null)
+  const [ocrOpen, setOcrOpen] = useState(false)
+  const [ocrProvider, setOcrProvider] = useState<OcrProvider>('offline')
+  const [entryType, setEntryType] = useState<MembershipType>('rms-member')
+  const [ocrDraft, setOcrDraft] = useState<OcrEntryDraft>()
+  const [ocrBusy, setOcrBusy] = useState(false)
+  const [ocrProgress, setOcrProgress] = useState(0)
+  const [ocrFileName, setOcrFileName] = useState('')
   const artists = useMemo(() => catalogue.source?.artists ?? [], [catalogue.source])
 
   useEffect(() => {
@@ -117,7 +130,8 @@ export default function App() {
       if (artworks.length) return [{ artist, artworks }]
       if (artist.artworks.length) return []
       const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-r', 'missing-votes']
-      const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email)
+      const memberFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
+      const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email) && (!memberFilters.length || memberFilters.includes(artist.membershipType ?? 'non-member'))
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
     }).sort((a, b) => {
       if (a.artworks.length === 0 && b.artworks.length > 0) return 1
@@ -222,6 +236,44 @@ export default function App() {
     finally { if (imagesInput.current) imagesInput.current.value = '' }
   }
 
+  const scanEntryForm = async (file?: File) => {
+    if (!file) return
+    setOcrBusy(true); setOcrProgress(0); setOcrFileName(file.name)
+    try {
+      if (ocrProvider === 'offline') setOcrDraft(await runOfflineOcr(file, entryType, setOcrProgress))
+      else {
+        const saved = localStorage.getItem('rms-gemini-api-key') ?? ''
+        const apiKey = window.prompt('Enter your Google Gemini API key. It is stored only on this device and the form will be sent to Google for OCR.', saved)?.trim()
+        if (!apiKey) return
+        localStorage.setItem('rms-gemini-api-key', apiKey)
+        setOcrDraft(await runOnlineOcr(file, entryType, apiKey))
+      }
+    } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'The entry form could not be read.') }
+    finally { setOcrBusy(false); if (entryFormInput.current) entryFormInput.current.value = '' }
+  }
+
+  const saveOcrDraft = async () => {
+    if (!ocrDraft?.fullName.trim()) { window.alert('Enter the artist name before creating cards.'); return }
+    const works = ocrDraft.artworks.filter((artwork) => artwork.title.trim() || artwork.rNumber.trim())
+    if (!works.length) { window.alert('Add at least one artwork title or R number.'); return }
+    const artistId = `local-${crypto.randomUUID()}`
+    const nameParts = capitaliseName(ocrDraft.fullName).split(/\s+/)
+    const artist: ArtistSubmission = {
+      id: artistId, sourceRow: Date.now(), fullName: capitaliseName(ocrDraft.fullName),
+      firstName: nameParts.slice(0, -1).join(' ') || nameParts[0], surname: nameParts.length > 1 ? nameParts.at(-1)! : '',
+      email: ocrDraft.email, address: ocrDraft.address, phone: ocrDraft.phone, membershipType: ocrDraft.membershipType, locallyAdded: true, warnings: [],
+      artworks: works.map((work, index) => ({
+        id: `${artistId}-${index + 1}`, artistId, position: index + 1, title: work.title, medium: work.medium,
+        dimensions: work.dimensions, price: work.price, votes: { yes: 0, maybe: 0, no: 0, valid: false, raw: '' },
+        verdict: 'tie', warnings: [],
+      })),
+    }
+    await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision, rNumber: works[index].rNumber }])))
+    setExpanded((current) => new Set(current).add(artistId))
+    setImportNotice(`Added ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)
+    setOcrDraft(undefined); setOcrOpen(false)
+  }
+
   return (
     <main className="app-shell">
       <header className="topbar">
@@ -267,6 +319,7 @@ export default function App() {
             <button onClick={() => imagesInput.current?.click()}><FolderOpen size={14} />Import the images</button>
             <input ref={imagesInput} className="visually-hidden" type="file" accept="image/*,.heic,.heif,.tif,.tiff" multiple onChange={(event) => void importImageFolder(event.target.files)} />
             <small>Images are matched by spreadsheet filename, then artwork title, and stored on this device for offline use.</small>
+            <button className="scan-form-button" onClick={() => { setOcrDraft(blankEntry(entryType)); setOcrOpen(true) }}><Camera size={14} />Scan / add entry form</button>
           </div>
           <label className="search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search artist or artwork" />{search && <button onClick={() => setSearch('')} aria-label="Clear search"><X size={15} /></button>}</label>
           <div className="filter-title"><SlidersHorizontal size={15} /><h2>Filter catalogue</h2></div>
@@ -323,7 +376,7 @@ export default function App() {
                         <label><span>First Name</span><input value={override?.firstName ?? artist.firstName} onChange={(event) => catalogue.setArtistOverride(artist.id, { firstName: event.target.value })} onBlur={(event) => catalogue.setArtistOverride(artist.id, { firstName: capitaliseName(event.target.value) })} /></label>
                         <label><span>Surname</span><input value={override?.surname ?? artist.surname} onChange={(event) => catalogue.setArtistOverride(artist.id, { surname: event.target.value })} onBlur={(event) => catalogue.setArtistOverride(artist.id, { surname: capitaliseName(event.target.value) })} /></label>
                       </div>
-                      <p>{[ `Original: ${artist.fullName || 'Not supplied'}`, artist.email || 'No email', artist.youngArtistAge !== undefined ? `Young Artist age ${artist.youngArtistAge}` : artist.dateOfBirth ? `DOB ${artist.dateOfBirth}` : '' ].filter(Boolean).join(' · ')}</p>
+                      <p>{[MEMBERSHIP_LABELS[artist.membershipType ?? 'non-member'], `Original: ${artist.fullName || 'Not supplied'}`, artist.email || 'No email', artist.phone, artist.address, artist.youngArtistAge !== undefined ? `Young Artist age ${artist.youngArtistAge}` : artist.dateOfBirth ? `DOB ${artist.dateOfBirth}` : '' ].filter(Boolean).join(' · ')}</p>
                     </div>
                     <div className="artist-meta">
                       <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
@@ -347,7 +400,7 @@ export default function App() {
                               <span className={`decision-label ${decision}`}>{decision}</span>
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
-                            <p className="medium">{artwork.medium || 'Medium not supplied'} · Artwork {artwork.position}</p>
+                            <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, artwork.price ? `£${artwork.price}` : '', `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
                             <label className="r-number"><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" pattern="[0-9]*" value={state?.rNumber?.replace(/\D/g, '') ?? ''} placeholder="225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
@@ -382,6 +435,37 @@ export default function App() {
         <button className="lightbox-close" onClick={() => setLightbox(undefined)} aria-label="Close preview"><X /></button>
         <figure onClick={(event) => event.stopPropagation()}><LightboxImage artwork={lightbox} /><figcaption>{lightbox.title || 'Untitled artwork'}</figcaption></figure>
       </div>}
+
+      {ocrOpen && <div className="ocr-backdrop" role="dialog" aria-modal="true" aria-label="Add entry form"><section className="ocr-dialog">
+        <div className="ocr-heading"><div><p className="eyebrow">Selection day</p><h2>Scan or add an entry form</h2></div><button onClick={() => { setOcrOpen(false); setOcrDraft(undefined) }} aria-label="Close"><X /></button></div>
+        <div className="ocr-options">
+          <label><span>Artist type</span><select value={entryType} onChange={(event) => { const type = event.target.value as MembershipType; setEntryType(type); setOcrDraft((draft) => draft ? { ...draft, membershipType: type } : blankEntry(type)) }}><option value="rms-member">RMS Member</option><option value="associate-member">Associate Member</option><option value="non-member">Non-member</option></select></label>
+          <fieldset><legend>OCR provider</legend><label><input type="radio" checked={ocrProvider === 'offline'} onChange={() => setOcrProvider('offline')} />Offline · private</label><label><input type="radio" checked={ocrProvider === 'online'} onChange={() => setOcrProvider('online')} />Online · better handwriting</label></fieldset>
+          <button className="button secondary" onClick={() => entryFormInput.current?.click()} disabled={ocrBusy}><Camera size={16} />{ocrBusy ? `Reading${ocrProgress ? ` ${Math.round(ocrProgress * 100)}%` : '…'}` : 'Photograph or choose form'}</button>
+          <input ref={entryFormInput} className="visually-hidden" type="file" accept="image/*,application/pdf" capture="environment" onChange={(event) => void scanEntryForm(event.target.files?.[0])} />
+          <small>{ocrProvider === 'offline' ? 'Works without internet. Handwriting accuracy may be limited.' : 'Sends this form’s personal details to Google Gemini. A personal API key is required.'}</small>
+        </div>
+        {ocrDraft && <div className="ocr-review">
+          <h3>Review before creating cards</h3><p>OCR can make mistakes. Correct every field, especially prices, R numbers and A/X decisions.</p>
+          <div className="contact-grid">
+            <label><span>Artist name</span><input value={ocrDraft.fullName} onChange={(e) => setOcrDraft({ ...ocrDraft, fullName: e.target.value })} /></label>
+            <label><span>Email</span><input value={ocrDraft.email} onChange={(e) => setOcrDraft({ ...ocrDraft, email: e.target.value })} /></label>
+            <label><span>Phone</span><input value={ocrDraft.phone} onChange={(e) => setOcrDraft({ ...ocrDraft, phone: e.target.value })} /></label>
+            <label className="wide"><span>Address</span><input value={ocrDraft.address} onChange={(e) => setOcrDraft({ ...ocrDraft, address: e.target.value })} /></label>
+          </div>
+          <div className="ocr-artworks">{ocrDraft.artworks.map((work, index) => <div className={`ocr-artwork decision-${work.decision}`} key={index}>
+            <strong>Artwork {index + 1}</strong><label><span>Title</span><input value={work.title} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, title: e.target.value } : item) })} /></label>
+            <label><span>Medium</span><input value={work.medium} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, medium: e.target.value } : item) })} /></label>
+            <label><span>Size (mm)</span><input value={work.dimensions} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, dimensions: e.target.value } : item) })} /></label>
+            <label><span>Price £</span><input value={work.price} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, price: e.target.value } : item) })} /></label>
+            <label><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" value={work.rNumber} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, rNumber: e.target.value.replace(/\D/g, '') } : item) })} /></span></label>
+            <label><span>A / X</span><select value={work.decision} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, decision: e.target.value as CatalogueDecision } : item) })}><option value="undecided">Not marked</option><option value="included">A · Accepted</option><option value="excluded">X · Rejected</option></select></label>
+            <button className="remove-work" onClick={() => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.filter((_, i) => i !== index) })}><Trash2 size={14} />Remove</button>
+          </div>)}</div>
+          <button className="add-work" onClick={() => setOcrDraft({ ...ocrDraft, artworks: [...ocrDraft.artworks, blankEntry(entryType).artworks[0]] })}><Plus size={15} />Add artwork</button>
+          <div className="ocr-actions"><button className="button secondary" onClick={() => { setOcrOpen(false); setOcrDraft(undefined) }}>Cancel</button><button className="button primary" onClick={() => void saveOcrDraft()}>Create artist cards</button></div>
+        </div>}
+      </section></div>}
     </main>
   )
 }

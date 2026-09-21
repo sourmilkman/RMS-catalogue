@@ -1,5 +1,6 @@
 export type Verdict = 'yes' | 'maybe' | 'no' | 'tie'
 export type CatalogueDecision = 'included' | 'excluded' | 'undecided'
+export type MembershipType = 'rms-member' | 'associate-member' | 'non-member'
 export type ExportField = 'firstName' | 'surname' | 'title' | 'email' | 'dob' | 'download'
 
 export interface Votes {
@@ -24,6 +25,8 @@ export interface ArtworkSubmission {
   localImageName?: string
   title: string
   medium?: string
+  dimensions?: string
+  price?: string
   votes: Votes
   verdict: Verdict
   warnings: DataWarning[]
@@ -36,6 +39,10 @@ export interface ArtistSubmission {
   firstName: string
   surname: string
   email?: string
+  address?: string
+  phone?: string
+  membershipType?: MembershipType
+  locallyAdded?: boolean
   dateOfBirth?: string
   youngArtistAge?: number
   artworks: ArtworkSubmission[]
