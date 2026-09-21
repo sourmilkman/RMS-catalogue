@@ -9,7 +9,7 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
-import { blankEntry, findDuplicateArtist, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
+import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -260,7 +260,7 @@ export default function App() {
     if (duplicate && !window.confirm(`${duplicate.fullName || 'This artist'} has already been entered.\n\nSelect OK to overwrite the existing artist card and artworks, or Cancel to keep the existing entry.`)) return
     const artistId = duplicate?.id ?? `local-${crypto.randomUUID()}`
     const nameParts = capitaliseName(ocrDraft.fullName).split(/\s+/)
-    const artist: ArtistSubmission = {
+    const artist = preserveArtworkImages(duplicate, {
       id: artistId, sourceRow: Date.now(), fullName: capitaliseName(ocrDraft.fullName),
       firstName: nameParts.slice(0, -1).join(' ') || nameParts[0], surname: nameParts.length > 1 ? nameParts.at(-1)! : '',
       email: ocrDraft.email, address: ocrDraft.address, phone: ocrDraft.phone, membershipType: ocrDraft.membershipType, locallyAdded: true, warnings: [],
@@ -269,7 +269,7 @@ export default function App() {
         dimensions: work.dimensions, price: work.price, votes: { yes: 0, maybe: 0, no: 0, valid: false, raw: '' },
         verdict: 'tie', warnings: [],
       })),
-    }
+    } satisfies ArtistSubmission)
     await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision, rNumber: works[index].rNumber }])), duplicate?.id)
     setExpanded((current) => new Set(current).add(artistId))
     setImportNotice(`${duplicate ? 'Overwrote the existing entry for' : 'Added'} ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)

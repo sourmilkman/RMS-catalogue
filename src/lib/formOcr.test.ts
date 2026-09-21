@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blankEntry, findDuplicateArtist, parseOcrText } from './formOcr'
+import { blankEntry, findDuplicateArtist, parseOcrText, preserveArtworkImages } from './formOcr'
 
 describe('entry form OCR', () => {
   it('creates an editable blank member entry', () => {
@@ -18,5 +18,12 @@ describe('entry form OCR', () => {
     const draft = { ...blankEntry('non-member'), fullName: 'Jane  Smith', email: 'JANE@example.com' }
     const artist = { id: 'a1', sourceRow: 1, fullName: 'Jane Smith', firstName: 'Jane', surname: 'Smith', email: 'jane@example.com', artworks: [], warnings: [] }
     expect(findDuplicateArtist([artist], draft)?.id).toBe('a1')
+  })
+
+  it('preserves existing artwork images when an artist is overwritten', () => {
+    const artwork = { id: 'old-1', artistId: 'a1', position: 1, title: 'Red Fox', imageUrl: 'https://example.com/fox.jpg', localImageName: 'fox.jpg', votes: { yes: 0, no: 0, maybe: 0, valid: false, raw: '' }, verdict: 'tie' as const, warnings: [] }
+    const existing = { id: 'a1', sourceRow: 1, fullName: 'Jane Smith', firstName: 'Jane', surname: 'Smith', artworks: [artwork], warnings: [] }
+    const replacement = { ...existing, locallyAdded: true, artworks: [{ ...artwork, id: 'new-1', imageUrl: undefined, localImageName: undefined }] }
+    expect(preserveArtworkImages(existing, replacement).artworks[0]).toMatchObject({ imageUrl: 'https://example.com/fox.jpg', localImageName: 'fox.jpg' })
   })
 })

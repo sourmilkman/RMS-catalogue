@@ -120,3 +120,17 @@ export function findDuplicateArtist(artists: ArtistSubmission[], draft: OcrEntry
   const name = identity(draft.fullName)
   return artists.find((artist) => (email && identity(artist.email ?? '') === email) || (name && identity(artist.fullName) === name))
 }
+
+export function preserveArtworkImages(existing: ArtistSubmission | undefined, replacement: ArtistSubmission): ArtistSubmission {
+  if (!existing) return replacement
+  const unused = new Set(existing.artworks.map((artwork) => artwork.id))
+  const artworks = replacement.artworks.map((artwork) => {
+    const title = identity(artwork.title)
+    const matched = existing.artworks.find((candidate) => unused.has(candidate.id) && title && identity(candidate.title) === title)
+      ?? existing.artworks.find((candidate) => unused.has(candidate.id) && candidate.position === artwork.position)
+    if (!matched) return artwork
+    unused.delete(matched.id)
+    return { ...artwork, imageUrl: matched.imageUrl, localImage: matched.localImage, localImageName: matched.localImageName }
+  })
+  return { ...replacement, artworks }
+}
