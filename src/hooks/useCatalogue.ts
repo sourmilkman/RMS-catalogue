@@ -133,6 +133,14 @@ export function useCatalogue() {
     await db.source.put(next)
   }, [])
 
+  const setArtworkPrice = useCallback(async (artworkId: string, price: string) => {
+    if (!sourceRef.current) return
+    const next = { ...sourceRef.current, artists: sourceRef.current.artists.map((artist) => ({ ...artist, artworks: artist.artworks.map((artwork) => artwork.id === artworkId ? { ...artwork, price: price.replace(/^£\s*/, '') } : artwork) })) }
+    setSource(next)
+    sourceRef.current = next
+    await db.source.put(next)
+  }, [])
+
   const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision' | 'rNumber'>>, replaceArtistId?: string) => {
     const current = sourceRef.current ?? { id: 'latest' as const, syncedAt: new Date().toISOString(), artists: [] }
     const replaced = replaceArtistId ? current.artists.find((item) => item.id === replaceArtistId) : undefined
@@ -214,5 +222,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, addLocalArtist, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
 }

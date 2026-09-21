@@ -4,7 +4,7 @@ import { isValidHttpUrl, normalizeIdentity, stableHash } from './identity'
 import { splitName } from './names'
 import { calculateVerdict, parseVotes } from './votes'
 
-type ArtworkColumns = { position: number; image?: number; title?: number; medium?: number; votes?: number }
+type ArtworkColumns = { position: number; image?: number; title?: number; medium?: number; price?: number; votes?: number }
 
 function cleanHeader(value: string): string {
   return value.trim().toLocaleLowerCase().replace(/\s+/g, ' ')
@@ -23,6 +23,7 @@ function findColumns(headers: string[]): { email?: number; name?: number; dob?: 
     const group = ensure(position)
     if (/image|attachment/.test(header)) group.image = index
     else if (/title/.test(header)) group.title = index
+    else if (/price/.test(header)) group.price = index
     else if (/vote/.test(header)) group.votes = index
   })
   normalised.forEach((header, index) => {
@@ -59,7 +60,7 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
     const ageValue = cell(row, columns.age)
     const parsedAge = Number.parseInt(ageValue, 10)
     const youngArtistAge = /^\d+$/.test(ageValue) && parsedAge >= 0 && parsedAge <= 120 ? parsedAge : undefined
-    const hasArtworkData = columns.artworks.some((group) => [group.image, group.title, group.medium, group.votes].some((index) => cell(row, index)))
+    const hasArtworkData = columns.artworks.some((group) => [group.image, group.title, group.medium, group.price, group.votes].some((index) => cell(row, index)))
     if (!fullName && !email && !hasArtworkData) return
 
     const duplicateKey = `${normalizeIdentity(email)}|${normalizeIdentity(fullName)}|${normalizeIdentity(dateOfBirth)}`
@@ -77,8 +78,9 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
       const imageUrl = cell(row, group.image)
       const title = cell(row, group.title)
       const medium = cell(row, group.medium)
+      const price = cell(row, group.price).replace(/^£\s*/, '')
       const rawVotes = cell(row, group.votes)
-      if (!imageUrl && !title && !medium && !rawVotes) return []
+      if (!imageUrl && !title && !medium && !price && !rawVotes) return []
       const warnings: DataWarning[] = []
       if (!title) warnings.push({ code: 'missing-title', message: 'Missing artwork title' })
       if (/^artwork\s*\d*$/i.test(title)) warnings.push({ code: 'generic-title', message: 'Generic artwork title' })
@@ -89,7 +91,7 @@ export function normaliseSheetCsv(csv: string, syncedAt = new Date().toISOString
       else if (!votes.valid) warnings.push({ code: 'malformed-votes', message: 'Vote string needs review' })
       const anchor = normalizeIdentity(imageUrl || title || medium || `slot-${group.position}`)
       const id = `art-${stableHash(`${artistId}|${group.position}|${anchor}`)}`
-      return [{ id, artistId, position: group.position, imageUrl: imageUrl || undefined, title, medium: medium || undefined, votes, verdict: calculateVerdict(votes), warnings }]
+      return [{ id, artistId, position: group.position, imageUrl: imageUrl || undefined, title, medium: medium || undefined, price: price || undefined, votes, verdict: calculateVerdict(votes), warnings }]
     })
 
     artists.push({ id: artistId, sourceRow: rowIndex + 2, fullName, firstName: name.firstName, surname: name.surname, email: email || undefined, dateOfBirth: dateOfBirth || undefined, youngArtistAge, artworks, warnings: artistWarnings })

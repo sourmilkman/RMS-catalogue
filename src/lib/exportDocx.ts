@@ -26,6 +26,7 @@ export interface ExportRow {
   firstName: string
   surname: string
   title: string
+  price: string
   yes: number
   no: number
   maybe: number
@@ -63,6 +64,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
         firstName: once('firstName', capitaliseName(override?.firstName ?? artist.firstName)),
         surname: once('surname', capitaliseName(override?.surname ?? artist.surname)),
         title: state.fields.title ? artwork.title : '',
+        price: artwork.price ? `£${artwork.price.replace(/^£\s*/, '')}` : '',
         yes: artwork.votes.yes,
         no: artwork.votes.no,
         maybe: artwork.votes.maybe,
@@ -78,7 +80,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
   })
 }
 
-const widths = [800, 1400, 1500, 3300, 500, 500, 500, 2450, 1900, 1750]
+const widths = [700, 1200, 1300, 2500, 900, 400, 400, 400, 1800, 1500, 1300]
 const borders = { style: BorderStyle.SINGLE, size: 4, color: '8A9391' }
 
 function cell(text: string, width: number, options: { fill?: string; bold?: boolean; align?: typeof AlignmentType.CENTER } = {}): TableCell {
@@ -95,7 +97,7 @@ function cell(text: string, width: number, options: { fill?: string; bold?: bool
 function downloadCell(row: ExportRow): TableCell {
   const valid = row.includeDownload && isValidHttpUrl(row.imageUrl)
   return new TableCell({
-    width: { size: widths[8], type: WidthType.DXA },
+    width: { size: widths[10], type: WidthType.DXA },
     verticalAlign: VerticalAlign.CENTER,
     margins: { top: 110, bottom: 110, left: 120, right: 120 },
     borders: { top: borders, bottom: borders, left: borders, right: borders },
@@ -117,7 +119,7 @@ function voteFill(verdict: Verdict, column: 'yes' | 'no' | 'maybe'): string | un
 
 export async function createCatalogueDocx(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>): Promise<Blob> {
   const rows = getExportRows(artists, decisions, overrides)
-  const headers = ['R No.', 'First Name', 'Surname', 'Title', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
+  const headers = ['R No.', 'First Name', 'Surname', 'Title', 'Price', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
   const tableRows = [
     new TableRow({ tableHeader: true, children: headers.map((header, index) => cell(header, widths[index], { fill: '465154', bold: true, align: AlignmentType.CENTER })) }),
     ...rows.map((row) => new TableRow({ children: [
@@ -125,11 +127,12 @@ export async function createCatalogueDocx(artists: ArtistSubmission[], decisions
       cell(row.firstName, widths[1]),
       cell(row.surname, widths[2]),
       cell(row.title, widths[3]),
-      cell(String(row.yes), widths[4], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
-      cell(String(row.no), widths[5], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
-      cell(String(row.maybe), widths[6], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
-      cell(row.email, widths[7]),
-      cell(row.dobYoungArtist, widths[8]),
+      cell(row.price, widths[4], { align: AlignmentType.CENTER }),
+      cell(String(row.yes), widths[5], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
+      cell(String(row.no), widths[6], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
+      cell(String(row.maybe), widths[7], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
+      cell(row.email, widths[8]),
+      cell(row.dobYoungArtist, widths[9]),
       downloadCell(row),
     ] })),
   ]

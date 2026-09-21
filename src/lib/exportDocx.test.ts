@@ -8,7 +8,7 @@ import { validateRNumbers } from './googleSheets'
 const artist: ArtistSubmission = {
   id: 'artist', sourceRow: 2, fullName: 'Alice Example', firstName: 'Alice', surname: 'Example', email: 'a@example.com', youngArtistAge: 20, warnings: [],
   artworks: [
-    { id: 'included', artistId: 'artist', position: 1, imageUrl: 'https://example.com/Arthur’s Crown image.jpg', title: 'One', medium: 'Oil', votes: { yes: 5, no: 0, maybe: 2, valid: true, raw: '' }, verdict: 'yes', warnings: [] },
+    { id: 'included', artistId: 'artist', position: 1, imageUrl: 'https://example.com/Arthur’s Crown image.jpg', title: 'One', medium: 'Oil', price: '275', votes: { yes: 5, no: 0, maybe: 2, valid: true, raw: '' }, verdict: 'yes', warnings: [] },
     { id: 'excluded', artistId: 'artist', position: 2, title: 'Two', votes: { yes: 1, no: 4, maybe: 2, valid: true, raw: '' }, verdict: 'no', warnings: [] },
   ],
 }
@@ -18,7 +18,7 @@ describe('DOCX row selection', () => {
     const included: ArtworkDecision = { ...defaultDecision('yes', 'included'), fields: { ...defaultDecision('yes', 'included').fields, email: false } }
     const rows = getExportRows([artist], { included, excluded: defaultDecision('no', 'excluded') }, {})
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ title: 'One', yes: 5, no: 0, maybe: 2, email: '', dobYoungArtist: 'Young Artist · Age 20' })
+    expect(rows[0]).toMatchObject({ title: 'One', price: '£275', yes: 5, no: 0, maybe: 2, email: '', dobYoungArtist: 'Young Artist · Age 20' })
   })
 
   it('creates valid landscape geometry and URI-safe hyperlink relationships', async () => {

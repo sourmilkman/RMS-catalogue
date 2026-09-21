@@ -52,8 +52,8 @@ async function accessToken(): Promise<string> {
 
 function backupValues(rows: ExportRow[]): string[][] {
   return [
-    ['R Number', 'First Name', 'Surname', 'Title', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Source Image URL', 'Google Drive Image URL', 'Offline Image File'],
-    ...rows.map((row) => [row.rNumber, row.firstName, row.surname, row.title, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '', row.driveImageUrl ?? '', row.localImageName ?? '']),
+    ['R Number', 'First Name', 'Surname', 'Title', 'Price', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Source Image URL', 'Google Drive Image URL', 'Offline Image File'],
+    ...rows.map((row) => [row.rNumber, row.firstName, row.surname, row.title, row.price, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '', row.driveImageUrl ?? '', row.localImageName ?? '']),
   ]
 }
 

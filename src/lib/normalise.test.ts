@@ -22,4 +22,8 @@ describe('sheet normalisation', () => {
     const artwork = normaliseSheetCsv(csv).artists[1].artworks[0]
     expect(artwork.warnings.map((warning) => warning.code)).toEqual(expect.arrayContaining(['generic-title', 'malformed-votes']))
   })
+  it('imports artwork prices when the feed provides price columns', () => {
+    const priced = 'name,title of artwork 1,price of artwork 1,votes - artwork 1\nAlice Example,First,£275,Yes: 1; Maybe: 0; No: 0'
+    expect(normaliseSheetCsv(priced).artists[0].artworks[0].price).toBe('275')
+  })
 })

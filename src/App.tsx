@@ -407,7 +407,8 @@ export default function App() {
                               <span className={`decision-label ${decision}`}>{decision}</span>
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
-                            <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, artwork.price ? `£${artwork.price}` : '', `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
+                            <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
+                            <label className="price-input"><span>Catalogue price</span><span><b>£</b><input inputMode="decimal" value={artwork.price ?? ''} placeholder="0.00" onChange={(event) => void catalogue.setArtworkPrice(artwork.id, event.target.value)} /></span></label>
                             <label className="r-number"><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" pattern="[0-9]*" value={state?.rNumber?.replace(/\D/g, '') ?? ''} placeholder="225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}

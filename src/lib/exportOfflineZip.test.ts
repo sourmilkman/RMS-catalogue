@@ -3,7 +3,7 @@ import JSZip from 'jszip'
 import type { ExportRow } from './exportDocx'
 import { createOfflineBackup, offlineImageNames } from './exportOfflineZip'
 
-const row = (artworkId: string, name: string): ExportRow => ({ artworkId, artistId: 'artist', rNumber: '', firstName: '', surname: '', title: '', yes: 0, no: 0, maybe: 0, email: '', dobYoungArtist: '', includeDownload: true, verdict: 'tie', localImage: new Blob(['image']), localImageName: name })
+const row = (artworkId: string, name: string): ExportRow => ({ artworkId, artistId: 'artist', rNumber: '', firstName: '', surname: '', title: '', price: '', yes: 0, no: 0, maybe: 0, email: '', dobYoungArtist: '', includeDownload: true, verdict: 'tie', localImage: new Blob(['image']), localImageName: name })
 
 describe('offline export images', () => {
   it('creates safe unique image paths for duplicate filenames', () => {
