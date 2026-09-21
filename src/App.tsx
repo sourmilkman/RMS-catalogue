@@ -9,7 +9,7 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
-import { blankEntry, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
+import { blankEntry, findDuplicateArtist, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -256,7 +256,9 @@ export default function App() {
     if (!ocrDraft?.fullName.trim()) { window.alert('Enter the artist name before creating cards.'); return }
     const works = ocrDraft.artworks.filter((artwork) => artwork.title.trim() || artwork.rNumber.trim())
     if (!works.length) { window.alert('Add at least one artwork title or R number.'); return }
-    const artistId = `local-${crypto.randomUUID()}`
+    const duplicate = findDuplicateArtist(artists, ocrDraft)
+    if (duplicate && !window.confirm(`${duplicate.fullName || 'This artist'} has already been entered.\n\nSelect OK to overwrite the existing artist card and artworks, or Cancel to keep the existing entry.`)) return
+    const artistId = duplicate?.id ?? `local-${crypto.randomUUID()}`
     const nameParts = capitaliseName(ocrDraft.fullName).split(/\s+/)
     const artist: ArtistSubmission = {
       id: artistId, sourceRow: Date.now(), fullName: capitaliseName(ocrDraft.fullName),
@@ -268,9 +270,9 @@ export default function App() {
         verdict: 'tie', warnings: [],
       })),
     }
-    await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision, rNumber: works[index].rNumber }])))
+    await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision, rNumber: works[index].rNumber }])), duplicate?.id)
     setExpanded((current) => new Set(current).add(artistId))
-    setImportNotice(`Added ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)
+    setImportNotice(`${duplicate ? 'Overwrote the existing entry for' : 'Added'} ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)
     setOcrDraft(undefined); setOcrOpen(false)
   }
 

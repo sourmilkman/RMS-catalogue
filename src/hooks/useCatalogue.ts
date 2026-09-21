@@ -28,7 +28,10 @@ export function useCatalogue() {
     setSyncing(true)
     try {
       const fetched = await getRmsReviewData()
-      fetched.artists.push(...(sourceRef.current?.artists.filter((artist) => artist.locallyAdded) ?? []))
+      for (const local of sourceRef.current?.artists.filter((artist) => artist.locallyAdded) ?? []) {
+        const index = fetched.artists.findIndex((artist) => artist.id === local.id)
+        if (index >= 0) fetched.artists[index] = local; else fetched.artists.push(local)
+      }
       const next = carryLocalImages(sourceRef.current, fetched)
       const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
       setSource(next)
@@ -93,8 +96,10 @@ export function useCatalogue() {
   }, [])
 
   const importSource = useCallback(async (incoming: SourceSnapshot) => {
-    const incomingIds = new Set(incoming.artists.map((artist) => artist.id))
-    incoming.artists.push(...(sourceRef.current?.artists.filter((artist) => artist.locallyAdded && !incomingIds.has(artist.id)) ?? []))
+    for (const local of sourceRef.current?.artists.filter((artist) => artist.locallyAdded) ?? []) {
+      const index = incoming.artists.findIndex((artist) => artist.id === local.id)
+      if (index >= 0) incoming.artists[index] = local; else incoming.artists.push(local)
+    }
     const next = carryLocalImages(sourceRef.current, incoming)
     const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
     setSource(next)
@@ -128,10 +133,13 @@ export function useCatalogue() {
     await db.source.put(next)
   }, [])
 
-  const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision' | 'rNumber'>>) => {
+  const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision' | 'rNumber'>>, replaceArtistId?: string) => {
     const current = sourceRef.current ?? { id: 'latest' as const, syncedAt: new Date().toISOString(), artists: [] }
-    const next = { ...current, syncedAt: new Date().toISOString(), artists: [...current.artists, artist] }
+    const replaced = replaceArtistId ? current.artists.find((item) => item.id === replaceArtistId) : undefined
+    const removedArtworkIds = new Set(replaced?.artworks.map((artwork) => artwork.id) ?? [])
+    const next = { ...current, syncedAt: new Date().toISOString(), artists: replaceArtistId ? current.artists.map((item) => item.id === replaceArtistId ? artist : item) : [...current.artists, artist] }
     const nextDecisions = { ...decisionsRef.current }
+    for (const artworkId of removedArtworkIds) delete nextDecisions[artworkId]
     for (const artwork of artist.artworks) {
       const seed = initial[artwork.id]
       nextDecisions[artwork.id] = {
@@ -148,6 +156,7 @@ export function useCatalogue() {
     decisionsRef.current = nextDecisions
     await db.transaction('rw', db.source, db.decisions, async () => {
       await db.source.put(next)
+      if (removedArtworkIds.size) await db.decisions.bulkDelete([...removedArtworkIds])
       await db.decisions.bulkPut(artist.artworks.map((artwork) => nextDecisions[artwork.id]))
     })
   }, [])

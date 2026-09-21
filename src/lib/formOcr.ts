@@ -1,4 +1,4 @@
-import type { CatalogueDecision, MembershipType } from '../types'
+import type { ArtistSubmission, CatalogueDecision, MembershipType } from '../types'
 
 export type OcrProvider = 'offline' | 'online'
 
@@ -109,4 +109,14 @@ export async function runOnlineOcr(file: File, membershipType: MembershipType, a
 
 export function blankEntry(membershipType: MembershipType): OcrEntryDraft {
   return normaliseDraft({}, membershipType)
+}
+
+function identity(value: string): string {
+  return value.toLocaleLowerCase().replace(/[^a-z0-9@]/g, '')
+}
+
+export function findDuplicateArtist(artists: ArtistSubmission[], draft: OcrEntryDraft): ArtistSubmission | undefined {
+  const email = identity(draft.email)
+  const name = identity(draft.fullName)
+  return artists.find((artist) => (email && identity(artist.email ?? '') === email) || (name && identity(artist.fullName) === name))
 }
