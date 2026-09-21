@@ -16,6 +16,7 @@ export interface OcrEntryDraft {
   email: string
   address: string
   phone: string
+  societyInitials: string
   artworks: OcrArtworkDraft[]
   rawText?: string
 }
@@ -43,6 +44,7 @@ function normaliseDraft(value: Partial<OcrEntryDraft>, membershipType: Membershi
     email: String(value.email ?? '').trim(),
     address: String(value.address ?? '').trim(),
     phone: String(value.phone ?? '').trim(),
+    societyInitials: String(value.societyInitials ?? '').trim(),
     artworks: artworks.length ? artworks : [emptyArtwork()],
     rawText: value.rawText,
   }
@@ -57,6 +59,7 @@ export function parseOcrText(text: string, membershipType: MembershipType): OcrE
     email: valueAfter(text, 'EMAIL'),
     address: valueAfter(text, 'ADDRESS'),
     phone: valueAfter(text, 'PHONE NUMBER'),
+    societyInitials: valueAfter(text, 'INITIALS OF ART SOCIETIES OF WHICH YOU ARE A MEMBER'),
     artworks,
     rawText: text,
   }, membershipType)
@@ -92,7 +95,7 @@ function dataUrl(file: File): Promise<string> {
 }
 
 export async function runOnlineOcr(file: File, membershipType: MembershipType, apiKey: string): Promise<OcrEntryDraft> {
-  const prompt = `Read this handwritten RMS exhibition entry schedule. Return JSON only with keys fullName, email, address, phone, artworks. Each artwork must have title, medium, dimensions, price, decision. decision is included for A, excluded for X, otherwise undecided. Do not invent unreadable values; use empty strings. Preserve all artwork rows containing handwriting.`
+  const prompt = `Read this handwritten RMS exhibition entry schedule. Return JSON only with keys fullName, email, address, phone, societyInitials, artworks. Each artwork must have title, medium, dimensions, price, decision. decision is included for A, excluded for X, otherwise undecided. Do not invent unreadable values; use empty strings. Preserve all artwork rows containing handwriting.`
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

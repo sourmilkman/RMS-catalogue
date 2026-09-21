@@ -68,6 +68,8 @@ export interface ArtistOverride {
   firstName: string
   surname: string
   youngArtist: boolean
+  societyInitials: string
+  awardText: string
 }
 
 export interface ReconciliationResult {

@@ -190,6 +190,8 @@ export function useCatalogue() {
         firstName: patch.firstName ?? existing?.firstName ?? artist.firstName,
         surname: patch.surname ?? existing?.surname ?? artist.surname,
         youngArtist: patch.youngArtist ?? existing?.youngArtist ?? false,
+        societyInitials: patch.societyInitials ?? existing?.societyInitials ?? '',
+        awardText: patch.awardText ?? existing?.awardText ?? '',
       }
       void db.artistOverrides.put(nextItem)
       return { ...current, [artistId]: nextItem }

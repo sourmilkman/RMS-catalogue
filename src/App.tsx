@@ -88,6 +88,7 @@ export default function App() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [lightbox, setLightbox] = useState<ArtworkSubmission>()
   const [exporting, setExporting] = useState(false)
+  const [exportingCatalogue, setExportingCatalogue] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
   const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
@@ -197,6 +198,16 @@ export default function App() {
     }
   }
 
+  const exportCatalogueLayout = async () => {
+    if (!counts.included) { window.alert('Include at least one artwork before exporting.'); return }
+    setExportingCatalogue(true)
+    try {
+      const { downloadPrintedCatalogueDocx } = await import('./lib/exportCatalogueDocx')
+      await downloadPrintedCatalogueDocx(artists, catalogue.decisions, catalogue.overrides, 1)
+    } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Catalogue Word export failed.') }
+    finally { setExportingCatalogue(false) }
+  }
+
   const useGoogleClientId = () => {
     saveGoogleClientId()
     setGoogleSetupMessage('Client ID saved on this device. You are ready to export.')
@@ -268,6 +279,7 @@ export default function App() {
       })),
     } satisfies ArtistSubmission)
     await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision }])), duplicate?.id)
+    if (ocrDraft.societyInitials) catalogue.setArtistOverride(artist.id, { societyInitials: ocrDraft.societyInitials })
     setExpanded((current) => new Set(current).add(artistId))
     setImportNotice(`${duplicate ? 'Overwrote the existing entry for' : 'Added'} ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)
     setOcrDraft(undefined); setOcrOpen(false)
@@ -287,6 +299,9 @@ export default function App() {
           </button>
           <button className="button primary" onClick={() => void exportSelection()} disabled={exporting || !counts.included}>
             <Download size={17} />{exporting ? 'Exporting…' : 'Export Word + Sheet + ZIP'}
+          </button>
+          <button className="button secondary" onClick={() => void exportCatalogueLayout()} disabled={exportingCatalogue || !counts.included}>
+            <Download size={17} />{exportingCatalogue ? 'Creating catalogue…' : 'Export Catalogue Word'}
           </button>
         </div>
       </header>
@@ -377,6 +392,10 @@ export default function App() {
                         <label><span>Surname</span><input value={override?.surname ?? artist.surname} onChange={(event) => catalogue.setArtistOverride(artist.id, { surname: event.target.value })} onBlur={(event) => catalogue.setArtistOverride(artist.id, { surname: capitaliseName(event.target.value) })} /></label>
                       </div>
                       <p>{[MEMBERSHIP_LABELS[artist.membershipType ?? 'non-member'], `Original: ${artist.fullName || 'Not supplied'}`, artist.email || 'No email', artist.phone, artist.address, artist.youngArtistAge !== undefined ? `Young Artist age ${artist.youngArtistAge}` : artist.dateOfBirth ? `DOB ${artist.dateOfBirth}` : '' ].filter(Boolean).join(' · ')}</p>
+                      <div className="catalogue-meta-fields">
+                        <label><span>Society initials</span><input value={override?.societyInitials ?? ''} placeholder="RMS ARMS HS" onChange={(event) => catalogue.setArtistOverride(artist.id, { societyInitials: event.target.value.toUpperCase() })} /></label>
+                        <label><span>Award text</span><input value={override?.awardText ?? ''} placeholder="GOLD MEMORIAL BOWL 2026" onChange={(event) => catalogue.setArtistOverride(artist.id, { awardText: event.target.value.toUpperCase() })} /></label>
+                      </div>
                     </div>
                     <div className="artist-meta">
                       <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
@@ -451,6 +470,7 @@ export default function App() {
             <label><span>Artist name</span><input value={ocrDraft.fullName} onChange={(e) => setOcrDraft({ ...ocrDraft, fullName: e.target.value })} /></label>
             <label><span>Email</span><input value={ocrDraft.email} onChange={(e) => setOcrDraft({ ...ocrDraft, email: e.target.value })} /></label>
             <label><span>Phone</span><input value={ocrDraft.phone} onChange={(e) => setOcrDraft({ ...ocrDraft, phone: e.target.value })} /></label>
+            <label><span>Society initials</span><input value={ocrDraft.societyInitials} onChange={(e) => setOcrDraft({ ...ocrDraft, societyInitials: e.target.value.toUpperCase() })} /></label>
             <label className="wide"><span>Address</span><input value={ocrDraft.address} onChange={(e) => setOcrDraft({ ...ocrDraft, address: e.target.value })} /></label>
           </div>
           <div className="ocr-artworks">{ocrDraft.artworks.map((work, index) => <div className={`ocr-artwork decision-${work.decision}`} key={index}>
