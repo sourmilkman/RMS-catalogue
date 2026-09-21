@@ -52,8 +52,8 @@ async function accessToken(): Promise<string> {
 
 function backupValues(rows: ExportRow[]): string[][] {
   return [
-    ['R Number', 'First Name', 'Surname', 'Title', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Image URL'],
-    ...rows.map((row) => [row.rNumber, row.firstName, row.surname, row.title, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '']),
+    ['R Number', 'First Name', 'Surname', 'Title', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Source Image URL', 'Google Drive Image URL', 'Offline Image File'],
+    ...rows.map((row) => [row.rNumber, row.firstName, row.surname, row.title, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '', row.driveImageUrl ?? '', row.localImageName ?? '']),
   ]
 }
 
@@ -69,8 +69,33 @@ async function findBackupSpreadsheet(token: string): Promise<string | undefined>
   return found.files[0]?.id
 }
 
-export async function exportBackupSheet(rows: ExportRow[]): Promise<string> {
+async function driveImageFolder(token: string): Promise<string> {
+  const query = encodeURIComponent("name = 'RMS Catalogue Images' and mimeType = 'application/vnd.google-apps.folder' and trashed = false")
+  const found = await request<{ files: { id: string }[] }>(`https://www.googleapis.com/drive/v3/files?q=${query}&pageSize=1&fields=files(id)`, token)
+  if (found.files[0]) return found.files[0].id
+  const created = await request<{ id: string }>('https://www.googleapis.com/drive/v3/files?fields=id', token, { method: 'POST', body: JSON.stringify({ name: 'RMS Catalogue Images', mimeType: 'application/vnd.google-apps.folder' }) })
+  return created.id
+}
+
+async function uploadLocalImages(rows: ExportRow[], token: string): Promise<ExportRow[]> {
+  const localRows = rows.filter((row) => row.localImage)
+  if (!localRows.length) return rows
+  const folderId = await driveImageFolder(token)
+  const uploaded = new Map<string, string>()
+  for (const row of localRows) {
+    const name = row.localImageName || `${row.rNumber || row.artworkId}.jpg`
+    const created = await request<{ id: string }>('https://www.googleapis.com/drive/v3/files?fields=id', token, { method: 'POST', body: JSON.stringify({ name, parents: [folderId], appProperties: { rmsArtworkId: row.artworkId } }) })
+    const upload = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${created.id}?uploadType=media`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': row.localImage!.type || 'application/octet-stream' }, body: row.localImage })
+    if (!upload.ok) throw new Error(`Google Drive image upload failed (${upload.status}).`)
+    const file = await request<{ webViewLink: string }>(`https://www.googleapis.com/drive/v3/files/${created.id}?fields=webViewLink`, token)
+    uploaded.set(row.artworkId, file.webViewLink)
+  }
+  return rows.map((row) => ({ ...row, driveImageUrl: uploaded.get(row.artworkId) ?? row.driveImageUrl }))
+}
+
+export async function exportBackupSheet(rows: ExportRow[], uploadImages = false): Promise<{ spreadsheetUrl: string; rows: ExportRow[] }> {
   const token = await accessToken()
+  const exportedRows = uploadImages ? await uploadLocalImages(rows, token) : rows
   let spreadsheetId = localStorage.getItem(SPREADSHEET_ID_KEY) || await findBackupSpreadsheet(token)
   if (!spreadsheetId) {
     const created = await request<{ spreadsheetId: string; spreadsheetUrl: string }>('https://sheets.googleapis.com/v4/spreadsheets', token, { method: 'POST', body: JSON.stringify({ properties: { title: 'RMS Catalogue Selection Backup' }, sheets: [{ properties: { title: 'Selection' } }] }) })
@@ -79,12 +104,12 @@ export async function exportBackupSheet(rows: ExportRow[]): Promise<string> {
   localStorage.setItem(SPREADSHEET_ID_KEY, spreadsheetId)
   try {
     await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Selection:clear`, token, { method: 'POST', body: '{}' })
-    await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Selection!A1`, token, { method: 'PUT', body: JSON.stringify({ range: 'Selection!A1', majorDimension: 'ROWS', values: backupValues(rows) }) })
+    await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Selection!A1`, token, { method: 'PUT', body: JSON.stringify({ range: 'Selection!A1', majorDimension: 'ROWS', values: backupValues(exportedRows) }) })
   } catch (error) {
     localStorage.removeItem(SPREADSHEET_ID_KEY)
     throw error
   }
-  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
+  return { spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`, rows: exportedRows }
 }
 
 export function validateRNumbers(rows: ExportRow[]): string | undefined {

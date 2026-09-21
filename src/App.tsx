@@ -92,6 +92,7 @@ export default function App() {
   const [exporting, setExporting] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
+  const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
   const [importNotice, setImportNotice] = useState<string>()
   const initialExpansion = useRef(false)
   const spreadsheetInput = useRef<HTMLInputElement>(null)
@@ -180,11 +181,13 @@ export default function App() {
       const rows = getExportRows(artists, catalogue.decisions, catalogue.overrides)
       const rNumberError = validateRNumbers(rows)
       if (rNumberError) { window.alert(rNumberError); return }
-      const [, url] = await Promise.all([
+      const [, sheetResult] = await Promise.all([
         downloadCatalogueDocx(artists, catalogue.decisions, catalogue.overrides),
-        exportBackupSheet(rows),
+        exportBackupSheet(rows, uploadDriveImages),
       ])
-      setBackupUrl(url)
+      const { downloadOfflineBackup } = await import('./lib/exportOfflineZip')
+      await downloadOfflineBackup(sheetResult.rows)
+      setBackupUrl(sheetResult.spreadsheetUrl)
     } catch (caught) {
       window.alert(caught instanceof Error ? caught.message : 'Export failed.')
     }
@@ -289,7 +292,7 @@ export default function App() {
             <RefreshCw size={17} className={catalogue.syncing ? 'spin' : ''} />{catalogue.syncing ? 'Synchronising…' : 'Refresh from Google Sheet'}
           </button>
           <button className="button primary" onClick={() => void exportSelection()} disabled={exporting || !counts.included}>
-            <Download size={17} />{exporting ? 'Exporting…' : 'Export Word + Sheet'}
+            <Download size={17} />{exporting ? 'Exporting…' : 'Export Word + Sheet + ZIP'}
           </button>
         </div>
       </header>
@@ -341,13 +344,15 @@ export default function App() {
             <p>For the RMS secretary:</p>
             <ol>
               <li>On each device, select <strong>Paste / save Client ID</strong> once.</li>
-              <li>Select <strong>Export Word + Sheet</strong>.</li>
+              <li>Select <strong>Export Word + Sheet + ZIP</strong>.</li>
               <li>Sign in as <strong>cmhucker@gmail.com</strong> and allow access.</li>
             </ol>
             <div className="google-setup-actions">
               <button onClick={useGoogleClientId}><KeyRound size={14} />Paste / save Client ID</button>
               <button onClick={() => void copyGoogleClientId()}><ClipboardCopy size={14} />Copy Client ID</button>
             </div>
+            <label className="drive-upload-toggle"><input type="checkbox" checked={uploadDriveImages} onChange={(event) => { setUploadDriveImages(event.target.checked); localStorage.setItem('rms-upload-drive-images', String(event.target.checked)) }} />Upload locally added images to Google Drive</label>
+            <small>When enabled, the Google Sheet and offline Excel backup include a Drive link. The ZIP always includes local images and working relative links.</small>
             {googleSetupMessage && <p className="google-setup-status" role="status"><Check size={13} />{googleSetupMessage}</p>}
           </div>
           <button className="reset-button" onClick={() => void reset()}><RotateCcw size={15} />Reset catalogue decisions</button>

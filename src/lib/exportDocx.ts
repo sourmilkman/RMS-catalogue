@@ -32,6 +32,9 @@ export interface ExportRow {
   email: string
   dobYoungArtist: string
   imageUrl?: string
+  localImage?: Blob
+  localImageName?: string
+  driveImageUrl?: string
   includeDownload: boolean
   verdict: Verdict
 }
@@ -66,6 +69,8 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
         email: once('email', artist.email ?? ''),
         dobYoungArtist: once('dob', dobYoung),
         imageUrl: artwork.imageUrl,
+        localImage: artwork.localImage,
+        localImageName: artwork.localImageName,
         includeDownload: state.fields.download,
         verdict: artwork.verdict,
       }]
