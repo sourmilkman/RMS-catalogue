@@ -7,7 +7,6 @@ export interface OcrArtworkDraft {
   medium: string
   dimensions: string
   price: string
-  rNumber: string
   decision: CatalogueDecision
 }
 
@@ -21,7 +20,7 @@ export interface OcrEntryDraft {
   rawText?: string
 }
 
-const emptyArtwork = (): OcrArtworkDraft => ({ title: '', medium: '', dimensions: '', price: '', rNumber: '', decision: 'undecided' })
+const emptyArtwork = (): OcrArtworkDraft => ({ title: '', medium: '', dimensions: '', price: '', decision: 'undecided' })
 
 function valueAfter(text: string, label: string): string {
   return text.match(new RegExp(`${label}\\s*[:—-]?\\s*([^\\n]+)`, 'i'))?.[1]?.trim() ?? ''
@@ -35,7 +34,6 @@ function normaliseDraft(value: Partial<OcrEntryDraft>, membershipType: Membershi
       medium: String(artwork?.medium ?? '').trim(),
       dimensions: String(artwork?.dimensions ?? '').trim(),
       price: String(artwork?.price ?? '').replace(/^£\s*/, '').trim(),
-      rNumber: String(artwork?.rNumber ?? '').replace(/\D/g, ''),
       decision,
     }
   }).filter((artwork) => Object.values(artwork).some(Boolean)) : []
@@ -94,7 +92,7 @@ function dataUrl(file: File): Promise<string> {
 }
 
 export async function runOnlineOcr(file: File, membershipType: MembershipType, apiKey: string): Promise<OcrEntryDraft> {
-  const prompt = `Read this handwritten RMS exhibition entry schedule. Return JSON only with keys fullName, email, address, phone, artworks. Each artwork must have title, medium, dimensions, price, rNumber, decision. decision is included for A, excluded for X, otherwise undecided. Do not invent unreadable values; use empty strings. Preserve all artwork rows containing handwriting.`
+  const prompt = `Read this handwritten RMS exhibition entry schedule. Return JSON only with keys fullName, email, address, phone, artworks. Each artwork must have title, medium, dimensions, price, decision. decision is included for A, excluded for X, otherwise undecided. Do not invent unreadable values; use empty strings. Preserve all artwork rows containing handwriting.`
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

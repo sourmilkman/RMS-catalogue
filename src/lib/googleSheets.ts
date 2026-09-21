@@ -52,8 +52,8 @@ async function accessToken(): Promise<string> {
 
 function backupValues(rows: ExportRow[]): string[][] {
   return [
-    ['R Number', 'First Name', 'Surname', 'Title', 'Price', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Source Image URL', 'Google Drive Image URL', 'Offline Image File'],
-    ...rows.map((row) => [row.rNumber, row.firstName, row.surname, row.title, row.price, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '', row.driveImageUrl ?? '', row.localImageName ?? '']),
+    ['First Name', 'Surname', 'Title', 'Price', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Source Image URL', 'Google Drive Image URL', 'Offline Image File'],
+    ...rows.map((row) => [row.firstName, row.surname, row.title, row.price, String(row.yes), String(row.no), String(row.maybe), row.email, row.dobYoungArtist, row.includeDownload ? row.imageUrl ?? '' : '', row.driveImageUrl ?? '', row.localImageName ?? '']),
   ]
 }
 
@@ -83,7 +83,7 @@ async function uploadLocalImages(rows: ExportRow[], token: string): Promise<Expo
   const folderId = await driveImageFolder(token)
   const uploaded = new Map<string, string>()
   for (const row of localRows) {
-    const name = row.localImageName || `${row.rNumber || row.artworkId}.jpg`
+    const name = row.localImageName || `${row.artworkId}.jpg`
     const created = await request<{ id: string }>('https://www.googleapis.com/drive/v3/files?fields=id', token, { method: 'POST', body: JSON.stringify({ name, parents: [folderId], appProperties: { rmsArtworkId: row.artworkId } }) })
     const upload = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${created.id}?uploadType=media`, { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': row.localImage!.type || 'application/octet-stream' }, body: row.localImage })
     if (!upload.ok) throw new Error(`Google Drive image upload failed (${upload.status}).`)
@@ -110,10 +110,4 @@ export async function exportBackupSheet(rows: ExportRow[], uploadImages = false)
     throw error
   }
   return { spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`, rows: exportedRows }
-}
-
-export function validateRNumbers(rows: ExportRow[]): string | undefined {
-  const entered = rows.map((row) => row.rNumber.toLocaleUpperCase()).filter(Boolean)
-  const duplicate = entered.find((value, index, values) => values.indexOf(value) !== index)
-  return duplicate ? `${duplicate} is used more than once. R numbers must be unique.` : undefined
 }

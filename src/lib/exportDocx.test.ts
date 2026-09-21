@@ -3,7 +3,6 @@ import JSZip from 'jszip'
 import type { ArtistSubmission, ArtworkDecision } from '../types'
 import { defaultDecision } from './reconcile'
 import { createCatalogueDocx, getExportRows } from './exportDocx'
-import { validateRNumbers } from './googleSheets'
 
 const artist: ArtistSubmission = {
   id: 'artist', sourceRow: 2, fullName: 'Alice Example', firstName: 'Alice', surname: 'Example', email: 'a@example.com', youngArtistAge: 20, warnings: [],
@@ -33,15 +32,4 @@ describe('DOCX row selection', () => {
     expect(relationshipsXml).not.toContain('Arthur’s Crown image.jpg')
   })
 
-  it('requires a unique, manual R number for every export row', () => {
-    const rows = getExportRows([artist], { included: { ...defaultDecision('yes', 'included'), rNumber: 'R225' } }, {})
-    expect(validateRNumbers(rows)).toBeUndefined()
-    expect(validateRNumbers([{ ...rows[0], rNumber: '' }])).toBeUndefined()
-    expect(validateRNumbers([...rows, { ...rows[0] }])).toContain('R225 is used more than once')
-  })
-
-  it('adds the R prefix in exports when only digits are entered', () => {
-    const rows = getExportRows([artist], { included: { ...defaultDecision('yes', 'included'), rNumber: '225' } }, {})
-    expect(rows[0].rNumber).toBe('R225')
-  })
 })

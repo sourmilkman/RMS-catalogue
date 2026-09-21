@@ -19,7 +19,7 @@ export function importDifference(previous: SourceSnapshot | undefined, next: Sou
     artist.artworks.map((artwork) => [artwork.position, artwork.title, artwork.medium, artwork.votes.raw, artwork.imageUrl]),
   ])
   if (JSON.stringify(compact(previous)) === JSON.stringify(compact(next))) return undefined
-  return `This import differs from the cached catalogue. Current: ${previous.artists.length} artists / ${artworkCount(previous)} artworks. Import: ${next.artists.length} artists / ${artworkCount(next)} artworks. Names, titles, votes or image references may also differ. Existing decisions and R numbers will be preserved wherever an artwork can be matched.`
+  return `This import differs from the cached catalogue. Current: ${previous.artists.length} artists / ${artworkCount(previous)} artworks. Import: ${next.artists.length} artists / ${artworkCount(next)} artworks. Names, titles, votes or image references may also differ. Existing decisions will be preserved wherever an artwork can be matched.`
 }
 
 export async function parseSpreadsheetFile(file: File): Promise<SourceSnapshot> {

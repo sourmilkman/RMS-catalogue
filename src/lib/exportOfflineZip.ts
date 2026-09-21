@@ -11,7 +11,7 @@ export function offlineImageNames(rows: ExportRow[]): Map<string, string> {
   const names = new Map<string, string>()
   for (const row of rows) {
     if (!row.localImage) continue
-    const original = safeName(row.localImageName ?? '', `${row.rNumber || row.artworkId}.jpg`)
+    const original = safeName(row.localImageName ?? '', `${row.artworkId}.jpg`)
     const dot = original.lastIndexOf('.')
     const stem = dot > 0 ? original.slice(0, dot) : original
     const ext = dot > 0 ? original.slice(dot) : ''
@@ -27,18 +27,18 @@ export function offlineImageNames(rows: ExportRow[]): Map<string, string> {
 export async function createOfflineBackup(rows: ExportRow[]): Promise<Blob> {
   const XLSX = await import('@e965/xlsx')
   const imageNames = offlineImageNames(rows)
-  const headers = ['R Number', 'First Name', 'Surname', 'Title', 'Price', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Online Image', 'Drive Image', 'Offline Image']
+  const headers = ['First Name', 'Surname', 'Title', 'Price', 'Yes', 'No', 'Maybe', 'Email', 'DOB / Young Artist', 'Online Image', 'Drive Image', 'Offline Image']
   const values = [headers, ...rows.map((row) => [
-    row.rNumber, row.firstName, row.surname, row.title, row.price, row.yes, row.no, row.maybe, row.email, row.dobYoungArtist,
+    row.firstName, row.surname, row.title, row.price, row.yes, row.no, row.maybe, row.email, row.dobYoungArtist,
     row.imageUrl ?? '', row.driveImageUrl ?? '', imageNames.has(row.artworkId) ? `images/${imageNames.get(row.artworkId)}` : '',
   ])]
   const sheet = XLSX.utils.aoa_to_sheet(values)
   rows.forEach((row, index) => {
     const excelRow = index + 2
-    if (row.imageUrl) sheet[`K${excelRow}`].l = { Target: row.imageUrl, Tooltip: 'Open source image' }
-    if (row.driveImageUrl) sheet[`L${excelRow}`].l = { Target: row.driveImageUrl, Tooltip: 'Open uploaded image' }
+    if (row.imageUrl) sheet[`J${excelRow}`].l = { Target: row.imageUrl, Tooltip: 'Open source image' }
+    if (row.driveImageUrl) sheet[`K${excelRow}`].l = { Target: row.driveImageUrl, Tooltip: 'Open uploaded image' }
     const localName = imageNames.get(row.artworkId)
-    if (localName) sheet[`M${excelRow}`].l = { Target: `images/${localName}`, Tooltip: 'Open offline image' }
+    if (localName) sheet[`L${excelRow}`].l = { Target: `images/${localName}`, Tooltip: 'Open offline image' }
   })
   sheet['!cols'] = headers.map((header) => ({ wch: Math.max(12, header.length + 2) }))
   const workbook = XLSX.utils.book_new()

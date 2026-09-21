@@ -7,7 +7,7 @@ import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
-import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId, validateRNumbers } from './lib/googleSheets'
+import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
 import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
@@ -20,7 +20,7 @@ const FILTERS = [
   ['rms-member', 'RMS Members'], ['associate-member', 'Associate Members'], ['non-member', 'Non-members'],
   ['included', 'Included'], ['excluded', 'Excluded'], ['undecided', 'Undecided'],
   ['yes', 'Yes verdict'], ['maybe', 'Maybe verdict'], ['no', 'No verdict'], ['tie', 'Tie'],
-  ['young', 'Young Artist'], ['missing-image', 'Missing image'], ['missing-r', 'Missing R number'],
+  ['young', 'Young Artist'], ['missing-image', 'Missing image'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
 const MEMBERSHIP_LABELS: Record<MembershipType, string> = { 'rms-member': 'RMS Member', 'associate-member': 'Associate Member', 'non-member': 'Non-member' }
@@ -66,7 +66,6 @@ function matchesArtworkFilters(
   artwork: ArtworkSubmission,
   decision: CatalogueDecision | undefined,
   youngArtist: boolean,
-  rNumber: string,
   filters: Set<string>,
 ): boolean {
   const membershipFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
@@ -77,7 +76,6 @@ function matchesArtworkFilters(
   if (verdictFilters.length && !verdictFilters.includes(artwork.verdict)) return false
   if (filters.has('young') && !youngArtist) return false
   if (filters.has('missing-image') && (artwork.imageUrl || artwork.localImage)) return false
-  if (filters.has('missing-r') && (decision !== 'included' || /\d/.test(rNumber))) return false
   if (filters.has('missing-email') && artist.email) return false
   if (filters.has('missing-votes') && artwork.votes.valid) return false
   return true
@@ -124,13 +122,12 @@ export default function App() {
       const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
       const artworks = artist.artworks.filter((artwork) => {
         const state = catalogue.decisions[artwork.id]
-        const rDigits = state?.rNumber?.replace(/\D/g, '') ?? ''
-        const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle) || rDigits.includes(needle.replace(/^r/, ''))
-        return searchMatches && matchesArtworkFilters(artist, artwork, state?.decision, isYoungArtist, rDigits, filters)
+        const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle)
+        return searchMatches && matchesArtworkFilters(artist, artwork, state?.decision, isYoungArtist, filters)
       })
       if (artworks.length) return [{ artist, artworks }]
       if (artist.artworks.length) return []
-      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-r', 'missing-votes']
+      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-votes']
       const memberFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
       const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email) && (!memberFilters.length || memberFilters.includes(artist.membershipType ?? 'non-member'))
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
@@ -147,7 +144,6 @@ export default function App() {
     current[decision] += 1
     return current
   }, { included: 0, excluded: 0, undecided: 0 })
-  const rNumbersRemaining = allArtworks.filter((artwork) => catalogue.decisions[artwork.id]?.decision === 'included' && !/\d/.test(catalogue.decisions[artwork.id]?.rNumber ?? '')).length
 
   const toggleFilter = (filter: string) => setFilters((current) => {
     const next = new Set(current)
@@ -179,8 +175,6 @@ export default function App() {
     try {
       const { downloadCatalogueDocx, getExportRows } = await import('./lib/exportDocx')
       const rows = getExportRows(artists, catalogue.decisions, catalogue.overrides)
-      const rNumberError = validateRNumbers(rows)
-      if (rNumberError) { window.alert(rNumberError); return }
       const [, sheetResult] = await Promise.all([
         downloadCatalogueDocx(artists, catalogue.decisions, catalogue.overrides),
         exportBackupSheet(rows, uploadDriveImages),
@@ -212,7 +206,7 @@ export default function App() {
     const warning = importDifference(catalogue.source, next)
     if (warning && !window.confirm(`${warning}\n\nMerge this import?`)) return
     await catalogue.importSource(next)
-    setImportNotice(`Imported ${next.artists.length} artists and ${next.artists.reduce((sum, artist) => sum + artist.artworks.length, 0)} artworks. Existing decisions and R numbers were preserved where matched.`)
+    setImportNotice(`Imported ${next.artists.length} artists and ${next.artists.reduce((sum, artist) => sum + artist.artworks.length, 0)} artworks. Existing decisions were preserved where matched.`)
   }
 
   const importSpreadsheet = async (file?: File) => {
@@ -257,8 +251,8 @@ export default function App() {
 
   const saveOcrDraft = async () => {
     if (!ocrDraft?.fullName.trim()) { window.alert('Enter the artist name before creating cards.'); return }
-    const works = ocrDraft.artworks.filter((artwork) => artwork.title.trim() || artwork.rNumber.trim())
-    if (!works.length) { window.alert('Add at least one artwork title or R number.'); return }
+    const works = ocrDraft.artworks.filter((artwork) => artwork.title.trim())
+    if (!works.length) { window.alert('Add at least one artwork title.'); return }
     const duplicate = findDuplicateArtist(artists, ocrDraft)
     if (duplicate && !window.confirm(`${duplicate.fullName || 'This artist'} has already been entered.\n\nSelect OK to overwrite the existing artist card and artworks, or Cancel to keep the existing entry.`)) return
     const artistId = duplicate?.id ?? `local-${crypto.randomUUID()}`
@@ -273,7 +267,7 @@ export default function App() {
         verdict: 'tie', warnings: [],
       })),
     } satisfies ArtistSubmission)
-    await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision, rNumber: works[index].rNumber }])), duplicate?.id)
+    await catalogue.addLocalArtist(artist, Object.fromEntries(artist.artworks.map((artwork, index) => [artwork.id, { decision: works[index].decision }])), duplicate?.id)
     setExpanded((current) => new Set(current).add(artistId))
     setImportNotice(`${duplicate ? 'Overwrote the existing entry for' : 'Added'} ${artist.fullName} with ${artist.artworks.length} artwork card${artist.artworks.length === 1 ? '' : 's'} from ${ocrFileName || 'the entry form'}.`)
     setOcrDraft(undefined); setOcrOpen(false)
@@ -309,7 +303,6 @@ export default function App() {
         <div className="included"><span>Included</span><strong>{counts.included}</strong></div>
         <div className="excluded"><span>Excluded</span><strong>{counts.excluded}</strong></div>
         <div className="undecided"><span>Undecided</span><strong>{counts.undecided}</strong></div>
-        <div className={rNumbersRemaining ? 'r-remaining' : 'included'}><span>R numbers remaining</span><strong>{rNumbersRemaining}</strong></div>
         <p className={`sync-state ${catalogue.error ? 'sync-error' : ''}`}><span className="sync-dot" />{catalogue.syncing ? 'Synchronising with Google Sheet…' : formatSync(catalogue.source?.syncedAt)}</p>
       </section>
 
@@ -317,7 +310,7 @@ export default function App() {
         <aside className="filters-panel">
           <div className="import-panel">
             <div className="filter-title"><FileUp size={15} /><h2>Import offline data</h2></div>
-            <p>Merge another catalogue while preserving decisions and R numbers.</p>
+            <p>Merge another catalogue while preserving existing decisions.</p>
             <button onClick={() => spreadsheetInput.current?.click()}><FileUp size={14} />Import spreadsheet file</button>
             <input ref={spreadsheetInput} className="visually-hidden" type="file" accept=".csv,.tsv,.txt,.html,.htm,.xls,.xlsx,.xlsm,.xlsb,.ods,.fods" onChange={(event) => void importSpreadsheet(event.target.files?.[0])} />
             <button onClick={() => void importSheetLink()}><Link2 size={14} />Import Google Sheets link</button>
@@ -409,7 +402,6 @@ export default function App() {
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
                             <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
                             <label className="price-input"><span>Catalogue price</span><span><b>£</b><input inputMode="decimal" value={artwork.price ?? ''} placeholder="0.00" onChange={(event) => void catalogue.setArtworkPrice(artwork.id, event.target.value)} /></span></label>
-                            <label className="r-number"><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" pattern="[0-9]*" value={state?.rNumber?.replace(/\D/g, '') ?? ''} placeholder="225" disabled={decision !== 'included'} onChange={(event) => catalogue.setRNumber(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
                             <label className="manual-image"><FolderOpen size={13} />{artwork.localImageName ? `Local: ${artwork.localImageName}` : 'Choose image manually'}<input type="file" accept="image/*,.heic,.heif,.tif,.tiff" onChange={(event) => { const file = event.target.files?.[0]; if (file) void catalogue.setLocalImage(artwork.id, file); event.target.value = '' }} /></label>
@@ -454,7 +446,7 @@ export default function App() {
           <small>{ocrProvider === 'offline' ? 'Works without internet. Handwriting accuracy may be limited.' : 'Sends this form’s personal details to Google Gemini. A personal API key is required.'}</small>
         </div>
         {ocrDraft && <div className="ocr-review">
-          <h3>Review before creating cards</h3><p>OCR can make mistakes. Correct every field, especially prices, R numbers and A/X decisions.</p>
+          <h3>Review before creating cards</h3><p>OCR can make mistakes. Correct every field, especially prices and A/X decisions.</p>
           <div className="contact-grid">
             <label><span>Artist name</span><input value={ocrDraft.fullName} onChange={(e) => setOcrDraft({ ...ocrDraft, fullName: e.target.value })} /></label>
             <label><span>Email</span><input value={ocrDraft.email} onChange={(e) => setOcrDraft({ ...ocrDraft, email: e.target.value })} /></label>
@@ -466,7 +458,6 @@ export default function App() {
             <label><span>Medium</span><input value={work.medium} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, medium: e.target.value } : item) })} /></label>
             <label><span>Size (mm)</span><input value={work.dimensions} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, dimensions: e.target.value } : item) })} /></label>
             <label><span>Price £</span><input value={work.price} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, price: e.target.value } : item) })} /></label>
-            <label><span>R number</span><span className="r-input"><b>R</b><input inputMode="numeric" value={work.rNumber} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, rNumber: e.target.value.replace(/\D/g, '') } : item) })} /></span></label>
             <label><span>A / X</span><select value={work.decision} onChange={(e) => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.map((item, i) => i === index ? { ...item, decision: e.target.value as CatalogueDecision } : item) })}><option value="undecided">Not marked</option><option value="included">A · Accepted</option><option value="excluded">X · Rejected</option></select></label>
             <button className="remove-work" onClick={() => setOcrDraft({ ...ocrDraft, artworks: ocrDraft.artworks.filter((_, i) => i !== index) })}><Trash2 size={14} />Remove</button>
           </div>)}</div>

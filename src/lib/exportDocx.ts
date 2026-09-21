@@ -20,7 +20,6 @@ import { isValidHttpUrl } from './identity'
 import { capitaliseName } from './names'
 
 export interface ExportRow {
-  rNumber: string
   artistId: string
   artworkId: string
   firstName: string
@@ -60,7 +59,6 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
       return [{
         artistId: artist.id,
         artworkId: artwork.id,
-        rNumber: state.rNumber?.replace(/\D/g, '') ? `R${state.rNumber.replace(/\D/g, '')}` : '',
         firstName: once('firstName', capitaliseName(override?.firstName ?? artist.firstName)),
         surname: once('surname', capitaliseName(override?.surname ?? artist.surname)),
         title: state.fields.title ? artwork.title : '',
@@ -80,7 +78,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
   })
 }
 
-const widths = [700, 1200, 1300, 2500, 900, 400, 400, 400, 1800, 1500, 1300]
+const widths = [1100, 1200, 2500, 850, 350, 350, 350, 1800, 1500, 1300]
 const borders = { style: BorderStyle.SINGLE, size: 4, color: '8A9391' }
 
 function cell(text: string, width: number, options: { fill?: string; bold?: boolean; align?: typeof AlignmentType.CENTER } = {}): TableCell {
@@ -97,7 +95,7 @@ function cell(text: string, width: number, options: { fill?: string; bold?: bool
 function downloadCell(row: ExportRow): TableCell {
   const valid = row.includeDownload && isValidHttpUrl(row.imageUrl)
   return new TableCell({
-    width: { size: widths[10], type: WidthType.DXA },
+    width: { size: widths[9], type: WidthType.DXA },
     verticalAlign: VerticalAlign.CENTER,
     margins: { top: 110, bottom: 110, left: 120, right: 120 },
     borders: { top: borders, bottom: borders, left: borders, right: borders },
@@ -119,20 +117,19 @@ function voteFill(verdict: Verdict, column: 'yes' | 'no' | 'maybe'): string | un
 
 export async function createCatalogueDocx(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>): Promise<Blob> {
   const rows = getExportRows(artists, decisions, overrides)
-  const headers = ['R No.', 'First Name', 'Surname', 'Title', 'Price', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
+  const headers = ['First Name', 'Surname', 'Title', 'Price', 'Y', 'N', 'M', 'email', 'DOB / Young artists', 'Dwld img']
   const tableRows = [
     new TableRow({ tableHeader: true, children: headers.map((header, index) => cell(header, widths[index], { fill: '465154', bold: true, align: AlignmentType.CENTER })) }),
     ...rows.map((row) => new TableRow({ children: [
-      cell(row.rNumber, widths[0], { bold: true, align: AlignmentType.CENTER }),
-      cell(row.firstName, widths[1]),
-      cell(row.surname, widths[2]),
-      cell(row.title, widths[3]),
-      cell(row.price, widths[4], { align: AlignmentType.CENTER }),
-      cell(String(row.yes), widths[5], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
-      cell(String(row.no), widths[6], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
-      cell(String(row.maybe), widths[7], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
-      cell(row.email, widths[8]),
-      cell(row.dobYoungArtist, widths[9]),
+      cell(row.firstName, widths[0]),
+      cell(row.surname, widths[1]),
+      cell(row.title, widths[2]),
+      cell(row.price, widths[3], { align: AlignmentType.CENTER }),
+      cell(String(row.yes), widths[4], { fill: voteFill(row.verdict, 'yes'), align: AlignmentType.CENTER }),
+      cell(String(row.no), widths[5], { fill: voteFill(row.verdict, 'no'), align: AlignmentType.CENTER }),
+      cell(String(row.maybe), widths[6], { fill: voteFill(row.verdict, 'maybe'), align: AlignmentType.CENTER }),
+      cell(row.email, widths[7]),
+      cell(row.dobYoungArtist, widths[8]),
       downloadCell(row),
     ] })),
   ]

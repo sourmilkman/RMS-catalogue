@@ -141,7 +141,7 @@ export function useCatalogue() {
     await db.source.put(next)
   }, [])
 
-  const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision' | 'rNumber'>>, replaceArtistId?: string) => {
+  const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision'>>, replaceArtistId?: string) => {
     const current = sourceRef.current ?? { id: 'latest' as const, syncedAt: new Date().toISOString(), artists: [] }
     const replaced = replaceArtistId ? current.artists.find((item) => item.id === replaceArtistId) : undefined
     const removedArtworkIds = new Set(replaced?.artworks.map((artwork) => artwork.id) ?? [])
@@ -154,7 +154,6 @@ export function useCatalogue() {
         artworkId: artwork.id,
         decision: seed?.decision ?? 'undecided',
         manual: true,
-        rNumber: seed?.rNumber?.replace(/\D/g, '') ?? '',
         fields: { firstName: true, surname: true, title: true, email: true, dob: true, download: true },
       }
     }
@@ -174,18 +173,6 @@ export function useCatalogue() {
       const existing = current[artworkId]
       if (!existing) return current
       const nextItem = { ...existing, fields: { ...existing.fields, [field]: included } }
-      const next = { ...current, [artworkId]: nextItem }
-      decisionsRef.current = next
-      void db.decisions.put(nextItem)
-      return next
-    })
-  }, [])
-
-  const setRNumber = useCallback((artworkId: string, rNumber: string) => {
-    setDecisions((current) => {
-      const existing = current[artworkId]
-      if (!existing) return current
-      const nextItem = { ...existing, rNumber: rNumber.replace(/\D/g, '') }
       const next = { ...current, [artworkId]: nextItem }
       decisionsRef.current = next
       void db.decisions.put(nextItem)
@@ -222,5 +209,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setRNumber, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setArtistOverride, resetDecisions }
 }
