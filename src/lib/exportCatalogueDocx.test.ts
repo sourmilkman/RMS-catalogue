@@ -23,5 +23,6 @@ describe('printed catalogue Word export', () => {
     expect(xml).toContain('LIST OF EXHIBITS - MINIATURE PAINTINGS')
     expect(xml).toContain('w:w="8391" w:h="11906"')
     expect(xml).toContain('001')
+    expect(zip.file('word/header1.xml')).toBeNull()
   })
 })

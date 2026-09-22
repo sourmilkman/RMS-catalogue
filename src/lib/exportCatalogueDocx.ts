@@ -1,5 +1,5 @@
 import {
-  AlignmentType, BorderStyle, Document, Footer, Header, PageNumber, Packer, Paragraph, Table, TableCell,
+  AlignmentType, BorderStyle, Document, Footer, PageNumber, Packer, Paragraph, Table, TableCell,
   TableLayoutType, TableRow, TextRun, WidthType,
 } from 'docx'
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision } from '../types'
@@ -67,7 +67,6 @@ export async function createPrintedCatalogueDocx(artists: ArtistSubmission[], de
     creator: 'RMS Catalogue Selection', title: 'RMS Exhibition Catalogue', description: 'Catalogue-ready list of accepted RMS exhibition artworks.',
     sections: [{
       properties: { page: { size: { width: PAGE_WIDTH, height: 11906 }, margin: { top: 700, right: 745, bottom: 700, left: 745, header: 260, footer: 260 } } },
-      headers: { default: new Header({ children: [paragraph('£', { align: AlignmentType.RIGHT, size: 18 })] }) },
       footers: { default: new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ children: [PageNumber.CURRENT], font: FONT, size: 17 })] })] }) },
       children,
     }],
