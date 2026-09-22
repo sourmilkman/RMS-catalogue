@@ -28,3 +28,6 @@ src/assets/hero.png
 *.njsproj
 *.sln
 *.sw?
+
+.vercel
+.env*

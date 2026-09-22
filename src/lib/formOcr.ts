@@ -94,18 +94,17 @@ function dataUrl(file: File): Promise<string> {
   })
 }
 
-export async function runOnlineOcr(file: File, membershipType: MembershipType, apiKey: string): Promise<OcrEntryDraft> {
-  const prompt = `Read this handwritten RMS exhibition entry schedule. Return JSON only with keys fullName, email, address, phone, societyInitials, artworks. Each artwork must have title, medium, dimensions, price, decision. decision is included for A, excluded for X, otherwise undecided. Do not invent unreadable values; use empty strings. Preserve all artwork rows containing handwriting.`
-  const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`, {
+const ONLINE_OCR_URL = import.meta.env.VITE_OCR_API_URL || 'https://rms-catalogue-ocr.vercel.app/api/ocr'
+
+export async function runOnlineOcr(file: File, membershipType: MembershipType): Promise<OcrEntryDraft> {
+  const response = await fetch(ONLINE_OCR_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }, { inlineData: { mimeType: file.type || 'image/jpeg', data: await dataUrl(file) } }] }], generationConfig: { responseMimeType: 'application/json' } }),
+    body: JSON.stringify({ membershipType, mimeType: file.type || 'image/jpeg', data: await dataUrl(file) }),
   })
-  if (!response.ok) throw new Error(`Online OCR failed (${response.status}). Check the Gemini API key and connection.`)
-  const payload = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] }
-  const text = payload.candidates?.[0]?.content?.parts?.[0]?.text
-  if (!text) throw new Error('Online OCR returned no readable data.')
-  return normaliseDraft(JSON.parse(text) as Partial<OcrEntryDraft>, membershipType)
+  const payload = await response.json() as Partial<OcrEntryDraft> & { error?: string }
+  if (!response.ok) throw new Error(payload.error || `Online OCR failed (${response.status}). Check the internet connection.`)
+  return normaliseDraft(payload, membershipType)
 }
 
 export function blankEntry(membershipType: MembershipType): OcrEntryDraft {

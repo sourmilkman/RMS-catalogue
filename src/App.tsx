@@ -249,13 +249,7 @@ export default function App() {
     setOcrBusy(true); setOcrProgress(0); setOcrFileName(file.name)
     try {
       if (ocrProvider === 'offline') setOcrDraft(await runOfflineOcr(file, entryType, setOcrProgress))
-      else {
-        const saved = localStorage.getItem('rms-gemini-api-key') ?? ''
-        const apiKey = window.prompt('Enter your Google Gemini API key. It is stored only on this device and the form will be sent to Google for OCR.', saved)?.trim()
-        if (!apiKey) return
-        localStorage.setItem('rms-gemini-api-key', apiKey)
-        setOcrDraft(await runOnlineOcr(file, entryType, apiKey))
-      }
+      else setOcrDraft(await runOnlineOcr(file, entryType))
     } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'The entry form could not be read.') }
     finally { setOcrBusy(false); if (entryFormInput.current) entryFormInput.current.value = '' }
   }
@@ -462,7 +456,7 @@ export default function App() {
           <fieldset><legend>OCR provider</legend><label><input type="radio" checked={ocrProvider === 'offline'} onChange={() => setOcrProvider('offline')} />Offline · private</label><label><input type="radio" checked={ocrProvider === 'online'} onChange={() => setOcrProvider('online')} />Online · better handwriting</label></fieldset>
           <button className="button secondary" onClick={() => entryFormInput.current?.click()} disabled={ocrBusy}><Camera size={16} />{ocrBusy ? `Reading${ocrProgress ? ` ${Math.round(ocrProgress * 100)}%` : '…'}` : 'Photograph or choose form'}</button>
           <input ref={entryFormInput} className="visually-hidden" type="file" accept="image/*,application/pdf" capture="environment" onChange={(event) => void scanEntryForm(event.target.files?.[0])} />
-          <small>{ocrProvider === 'offline' ? 'Works without internet. Handwriting accuracy may be limited.' : 'Sends this form’s personal details to Google Gemini. A personal API key is required.'}</small>
+          <small>{ocrProvider === 'offline' ? 'Works without internet. Handwriting accuracy may be limited.' : 'Uses the RMS Gemini service. This sends the form’s personal details to Google and requires internet.'}</small>
         </div>
         {ocrDraft && <div className="ocr-review">
           <h3>Review before creating cards</h3><p>OCR can make mistakes. Correct every field, especially prices and A/X decisions.</p>
