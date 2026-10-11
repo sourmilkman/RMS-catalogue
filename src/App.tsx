@@ -393,6 +393,7 @@ export default function App() {
                     </div>
                     <div className="artist-meta">
                       <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
+                      <label className={`young-toggle ${override?.sculptor ? 'active' : ''}`} title="Lists this artist under Sculptures in the printed catalogue"><input type="checkbox" checked={override?.sculptor ?? false} onChange={(event) => catalogue.setArtistOverride(artist.id, { sculptor: event.target.checked })} />Sculptor</label>
                       <span>{artist.artworks.length} submitted · {includedCount} included</span>
                       {warningCount > 0 && <span className="warning-count"><AlertTriangle size={14} />{warningCount} warning{warningCount === 1 ? '' : 's'}</span>}
                     </div>

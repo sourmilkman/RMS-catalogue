@@ -23,46 +23,74 @@ function cell(content: Paragraph[], width: number, left = 0): TableCell {
   return new TableCell({ width: { size: width, type: WidthType.DXA }, margins: { top: 0, bottom: 0, left, right: 0 }, borders: noBorders, children: content })
 }
 
-export function catalogueEntries(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>, startNumber = 1) {
+export type CatalogueSectionKey = 'sculptures' | 'paintings' | 'young'
+
+export const CATALOGUE_SECTIONS: { key: CatalogueSectionKey; title: string }[] = [
+  { key: 'sculptures', title: 'LIST OF EXHIBITS – SCULPTURES' },
+  { key: 'paintings', title: 'LIST OF EXHIBITS – MINIATURE PAINTINGS' },
+  { key: 'young', title: 'LIST OF EXHIBITS – YOUNG ARTISTS' },
+]
+
+export function catalogueSectionFor(artist: ArtistSubmission, override?: ArtistOverride): CatalogueSectionKey {
+  // Young Artists take priority, so a young sculptor is listed under Young Artists.
+  if (artist.youngArtistAge !== undefined || override?.youngArtist) return 'young'
+  if (override?.sculptor) return 'sculptures'
+  return 'paintings'
+}
+
+function sortKey(artist: ArtistSubmission, overrides: Record<string, ArtistOverride>): string {
+  return `${overrides[artist.id]?.surname ?? artist.surname} ${overrides[artist.id]?.firstName ?? artist.firstName}`.trim()
+}
+
+/** Sections in fixed order (Sculptures, Miniature Paintings, Young Artists), each A–Z by surname, numbered continuously. Empty sections are omitted. */
+export function catalogueSections(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>, startNumber = 1) {
   let number = startNumber
-  const acceptedArtists = artists.filter((artist) => artist.artworks.some((artwork) => decisions[artwork.id]?.decision === 'included')).sort((a, b) => {
-    const aName = `${overrides[a.id]?.surname ?? a.surname} ${overrides[a.id]?.firstName ?? a.firstName}`
-    const bName = `${overrides[b.id]?.surname ?? b.surname} ${overrides[b.id]?.firstName ?? b.firstName}`
-    return aName.localeCompare(bName)
-  })
-  return acceptedArtists.flatMap((artist) => {
-    const artworks = artist.artworks.filter((artwork) => decisions[artwork.id]?.decision === 'included')
-    if (!artworks.length) return []
-    const override = overrides[artist.id]
-    const name = capitaliseName(`${override?.firstName ?? artist.firstName} ${override?.surname ?? artist.surname}`).toLocaleUpperCase()
-    return [{
-      artistId: artist.id,
-      heading: [name, override?.societyInitials?.trim().toLocaleUpperCase()].filter(Boolean).join(' '),
-      awardText: override?.awardText?.trim().toLocaleUpperCase() ?? '',
-      artworks: artworks.map((artwork) => ({
-        number: String(number++).padStart(3, '0'),
-        description: artwork.medium ? `${artwork.title || 'Untitled'} (${artwork.medium})` : artwork.title || 'Untitled',
-        price: artwork.price?.replace(/^£\s*/, '') ?? '',
-      })),
-    }]
+  const accepted = artists
+    .filter((artist) => artist.artworks.some((artwork) => decisions[artwork.id]?.decision === 'included'))
+    .sort((a, b) => sortKey(a, overrides).localeCompare(sortKey(b, overrides), 'en-GB', { sensitivity: 'base' }))
+  return CATALOGUE_SECTIONS.flatMap((section) => {
+    const entries = accepted.filter((artist) => catalogueSectionFor(artist, overrides[artist.id]) === section.key).map((artist) => {
+      const override = overrides[artist.id]
+      const name = capitaliseName(`${override?.firstName ?? artist.firstName} ${override?.surname ?? artist.surname}`).toLocaleUpperCase()
+      return {
+        artistId: artist.id,
+        heading: [name, override?.societyInitials?.trim().toLocaleUpperCase()].filter(Boolean).join(' '),
+        awardText: override?.awardText?.trim().toLocaleUpperCase() ?? '',
+        artworks: artist.artworks.filter((artwork) => decisions[artwork.id]?.decision === 'included').map((artwork) => ({
+          number: String(number++).padStart(3, '0'),
+          description: artwork.medium ? `${artwork.title || 'Untitled'} (${artwork.medium})` : artwork.title || 'Untitled',
+          price: artwork.price?.replace(/^£\s*/, '') ?? '',
+        })),
+      }
+    })
+    return entries.length ? [{ ...section, entries }] : []
   })
 }
 
+/** Flat list of all entries in catalogue order. */
+export function catalogueEntries(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>, startNumber = 1) {
+  return catalogueSections(artists, decisions, overrides, startNumber).flatMap((section) => section.entries)
+}
+
 export async function createPrintedCatalogueDocx(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>, startNumber = 1): Promise<Blob> {
-  const entries = catalogueEntries(artists, decisions, overrides, startNumber)
-  const children: (Paragraph | Table)[] = [paragraph('LIST OF EXHIBITS - MINIATURE PAINTINGS', { bold: true, size: 27, after: 300 })]
-  for (const entry of entries) {
-    const rows = [
-      new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.heading, { bold: true, before: 160, after: entry.awardText ? 0 : 65, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] }),
-      ...(entry.awardText ? [new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.awardText, { italic: true, after: 55, keepNext: true })], 5350), cell([paragraph('')], 900)] })] : []),
-      ...entry.artworks.map((artwork) => new TableRow({ cantSplit: true, children: [
-        cell([paragraph(artwork.number, { align: AlignmentType.RIGHT })], 650),
-        cell([paragraph(artwork.description)], 5350, 100),
-        cell([paragraph(artwork.price, { align: AlignmentType.RIGHT })], 900),
-      ] })),
-    ]
-    children.push(new Table({ width: { size: CONTENT_WIDTH, type: WidthType.DXA }, layout: TableLayoutType.FIXED, columnWidths: [650, 5350, 900], borders: noBorders, rows }))
-  }
+  const sections = catalogueSections(artists, decisions, overrides, startNumber)
+  const children: (Paragraph | Table)[] = []
+  sections.forEach((section, index) => {
+    children.push(new Paragraph({ pageBreakBefore: index > 0, keepNext: true, spacing: { after: 0 }, alignment: AlignmentType.RIGHT, children: [new TextRun({ text: '£', font: FONT, size: 21, color: '000000' })] }))
+    children.push(paragraph(section.title, { bold: true, size: 27, after: 300, keepNext: true }))
+    for (const entry of section.entries) {
+      const rows = [
+        new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.heading, { bold: true, before: 160, after: entry.awardText ? 0 : 65, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] }),
+        ...(entry.awardText ? [new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.awardText, { italic: true, after: 55, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] })] : []),
+        ...entry.artworks.map((artwork) => new TableRow({ cantSplit: true, children: [
+          cell([paragraph(artwork.number, { align: AlignmentType.RIGHT })], 650),
+          cell([paragraph(artwork.description)], 5350, 100),
+          cell([paragraph(artwork.price, { align: AlignmentType.RIGHT })], 900),
+        ] })),
+      ]
+      children.push(new Table({ width: { size: CONTENT_WIDTH, type: WidthType.DXA }, layout: TableLayoutType.FIXED, columnWidths: [650, 5350, 900], borders: noBorders, rows }))
+    }
+  })
   return Packer.toBlob(new Document({
     creator: 'RMS Catalogue Selection', title: 'RMS Exhibition Catalogue', description: 'Catalogue-ready list of accepted RMS exhibition artworks.',
     sections: [{

@@ -190,6 +190,7 @@ export function useCatalogue() {
         firstName: patch.firstName ?? existing?.firstName ?? artist.firstName,
         surname: patch.surname ?? existing?.surname ?? artist.surname,
         youngArtist: patch.youngArtist ?? existing?.youngArtist ?? false,
+        sculptor: patch.sculptor ?? existing?.sculptor ?? false,
         societyInitials: patch.societyInitials ?? existing?.societyInitials ?? '',
         awardText: patch.awardText ?? existing?.awardText ?? '',
       }

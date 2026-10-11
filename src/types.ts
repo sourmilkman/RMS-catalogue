@@ -68,6 +68,7 @@ export interface ArtistOverride {
   firstName: string
   surname: string
   youngArtist: boolean
+  sculptor?: boolean
   societyInitials: string
   awardText: string
 }
