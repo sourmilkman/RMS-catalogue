@@ -63,3 +63,9 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .view-sections button { display: flex; align-items: center; gap: 7px; padding: 7px 9px; color: #8f9997; text-align: left; border: 1px dashed #50595b; border-radius: 8px; background: transparent; font-size: .76rem; }
 .view-sections button.shown { color: #dce1df; border-style: solid; background: #384044; }
 .view-sections button b { margin-left: auto; padding: 1px 7px; border-radius: 99px; background: #30373a; font-size: .68rem; }
+.order-toggle { display: grid; grid-template-columns: 1fr 1fr; padding: 3px; border: 1px solid #50595b; border-radius: 9px; background: #30373a; }
+.order-toggle button { padding: 7px 6px; color: #aeb7b5; border: 0; border-radius: 6px; background: transparent; font-size: .74rem; font-weight: 720; }
+.order-toggle button.selected { color: #f1ead0; background: #5a5139; box-shadow: inset 0 0 0 1px #8d7d45; }
+.group-heading { display: flex; align-items: baseline; gap: 10px; margin: 18px 2px 0; color: #e8d992; font-size: .82rem; letter-spacing: .09em; text-transform: uppercase; }
+.group-heading:first-child { margin-top: 0; }
+.group-heading span { color: #9fa9a7; font-size: .72rem; letter-spacing: 0; text-transform: none; }

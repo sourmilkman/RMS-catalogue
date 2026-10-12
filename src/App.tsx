@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, Eye, EyeOff, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
   Camera, FileSpreadsheet, FileText, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
@@ -9,7 +9,7 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
-import { isSculpture, isYoungArtist as isYoungArtistRule, sectionOf, type CatalogueSectionKey } from './lib/catalogueRules'
+import { CATALOGUE_GROUPS, catalogueGroupOf, isSculpture, isYoungArtist as isYoungArtistRule, sectionOf, type CatalogueGroupKey, type CatalogueSectionKey } from './lib/catalogueRules'
 import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { MergeReport } from './lib/wordMerge'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
@@ -27,10 +27,10 @@ const FILTERS = [
 ] as const
 const SECTION_VIEW: [CatalogueSectionKey, string][] = [['sculptures', 'Sculptures'], ['paintings', 'Miniature paintings'], ['young', 'Young Artists']]
 const VIEW_KEY = 'rms-view-settings'
-type ViewSettings = { hideExcluded: boolean; hiddenSections: CatalogueSectionKey[] }
+type ViewSettings = { hideExcluded: boolean; hiddenSections: CatalogueSectionKey[]; order: 'catalogue' | 'surname' }
 function loadView(): ViewSettings {
-  try { return { hideExcluded: false, hiddenSections: [], ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') } }
-  catch { return { hideExcluded: false, hiddenSections: [] } }
+  try { return { hideExcluded: false, hiddenSections: [], order: 'catalogue', ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') } }
+  catch { return { hideExcluded: false, hiddenSections: [], order: 'catalogue' } }
 }
 function saveView(view: ViewSettings) {
   try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)) } catch { /* view settings are a convenience only */ }
@@ -159,7 +159,7 @@ export default function App() {
 
   const visibleArtists = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase()
-    return artists.flatMap((artist) => {
+    const matched = artists.flatMap((artist) => {
       const override = catalogue.overrides[artist.id]
       const artistMatches = [artist.fullName, artist.email, override?.firstName, override?.surname].some((value) => value?.toLocaleLowerCase().includes(needle))
       const isYoungArtist = isYoungArtistRule(artist, override)
@@ -176,11 +176,27 @@ export default function App() {
       const memberFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
       const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email) && (!memberFilters.length || memberFilters.includes(artist.membershipType ?? 'non-member'))
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
-    }).sort((a, b) => {
-      if (a.artworks.length === 0 && b.artworks.length > 0) return 1
-      if (a.artworks.length > 0 && b.artworks.length === 0) return -1
-      return (catalogue.overrides[a.artist.id]?.surname ?? a.artist.surname).localeCompare(catalogue.overrides[b.artist.id]?.surname ?? b.artist.surname)
     })
+    const name = (artist: ArtistSubmission) => `${catalogue.overrides[artist.id]?.surname ?? artist.surname} ${catalogue.overrides[artist.id]?.firstName ?? artist.firstName}`
+    const byName = (a: { artist: ArtistSubmission }, b: { artist: ArtistSubmission }) => name(a.artist).localeCompare(name(b.artist), 'en-GB', { sensitivity: 'base' })
+    if (view.order === 'surname') {
+      return matched.map((item) => ({ ...item, group: undefined as CatalogueGroupKey | undefined })).sort((a, b) => {
+        if (a.artworks.length === 0 && b.artworks.length > 0) return 1
+        if (a.artworks.length > 0 && b.artworks.length === 0) return -1
+        return byName(a, b)
+      })
+    }
+    // Catalogue order: one card per artist per group, groups in catalogue order, each A–Z by surname.
+    const rank = (group?: CatalogueGroupKey) => group ? CATALOGUE_GROUPS.findIndex((item) => item.key === group) : CATALOGUE_GROUPS.length
+    return matched.flatMap(({ artist, artworks }) => {
+      if (!artworks.length) return [{ artist, artworks, group: undefined as CatalogueGroupKey | undefined }]
+      const groups = new Map<CatalogueGroupKey, ArtworkSubmission[]>()
+      for (const artwork of artworks) {
+        const group = catalogueGroupOf(artist, artwork, catalogue.overrides[artist.id], catalogue.decisions[artwork.id])
+        groups.set(group, [...(groups.get(group) ?? []), artwork])
+      }
+      return [...groups].map(([group, items]) => ({ artist, artworks: items, group: group as CatalogueGroupKey | undefined }))
+    }).sort((a, b) => rank(a.group) - rank(b.group) || byName(a, b))
   }, [artists, catalogue.decisions, catalogue.overrides, filters, search, view])
 
   const allArtworks = artists.flatMap((artist) => artist.artworks)
@@ -443,6 +459,10 @@ export default function App() {
           </div>
           <div className="view-panel">
             <div className="filter-title"><Eye size={15} /><h2>Show</h2></div>
+            <div className="order-toggle" role="group" aria-label="Card order">
+              <button className={view.order === 'catalogue' ? 'selected' : ''} aria-pressed={view.order === 'catalogue'} onClick={() => setView({ ...view, order: 'catalogue' })}>Catalogue order</button>
+              <button className={view.order === 'surname' ? 'selected' : ''} aria-pressed={view.order === 'surname'} onClick={() => setView({ ...view, order: 'surname' })}>A–Z only</button>
+            </div>
             <label className="view-switch"><input type="checkbox" role="switch" checked={view.hideExcluded} onChange={(event) => setView({ ...view, hideExcluded: event.target.checked })} /><span>Hide excluded works</span></label>
             <div className="view-sections" role="group" aria-label="Show or hide catalogue sections">
               {SECTION_VIEW.map(([key, label]) => {
@@ -494,14 +514,18 @@ export default function App() {
           {catalogue.source && visibleArtists.length === 0 && <div className="empty-state"><Search /><h3>No matching artworks</h3><p>Clear or adjust the current search and filters.</p></div>}
 
           <div className="artist-list">
-            {visibleArtists.map(({ artist, artworks }) => {
+            {visibleArtists.map(({ artist, artworks, group }, index) => {
+              const groupStart = view.order === 'catalogue' && (index === 0 || visibleArtists[index - 1].group !== group)
+              const groupWorks = groupStart ? visibleArtists.filter((item) => item.group === group).reduce((sum, item) => sum + item.artworks.length, 0) : 0
               const override = catalogue.overrides[artist.id]
               const isYoungArtist = isYoungArtistRule(artist, override)
               const isExpanded = expanded.has(artist.id)
               const includedCount = artist.artworks.filter((artwork) => catalogue.decisions[artwork.id]?.decision === 'included').length
               const warningCount = artist.warnings.length + artist.artworks.reduce((sum, artwork) => sum + artwork.warnings.length, 0)
               return (
-                <article className="artist-card" key={artist.id}>
+                <Fragment key={`${artist.id}-${group ?? 'all'}`}>
+                {groupStart && <h3 className="group-heading">{CATALOGUE_GROUPS.find((item) => item.key === group)?.label ?? 'No artworks'}<span>{groupWorks} work{groupWorks === 1 ? '' : 's'}</span></h3>}
+                <article className="artist-card">
                   <div className="artist-heading">
                     <button className="collapse-button" onClick={() => toggleArtist(artist.id)} aria-expanded={isExpanded}>{isExpanded ? <ChevronDown /> : <ChevronRight />}</button>
                     <div className="artist-identity">
@@ -567,6 +591,7 @@ export default function App() {
                     })}
                   </div>}
                 </article>
+                </Fragment>
               )
             })}
           </div>
