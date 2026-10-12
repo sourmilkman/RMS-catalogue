@@ -47,7 +47,7 @@ export interface ArtistSubmission {
   locallyAdded?: boolean
   dateOfBirth?: string
   youngArtistAge?: number
-  /** Set by a Word import (Young Artists section or column). */
+  /** Set by the Word lists: true if listed under Young Artists, false if listed only elsewhere. */
   youngArtist?: boolean
   artworks: ArtworkSubmission[]
   warnings: DataWarning[]
@@ -74,6 +74,8 @@ export interface ArtistOverride {
   firstName: string
   surname: string
   youngArtist: boolean
+  /** True once the Young Artist toggle has been used by hand. */
+  youngArtistSet?: boolean
   societyInitials: string
   awardText: string
 }

@@ -4,6 +4,8 @@ import { db } from '../lib/db'
 import { reconcileSource } from '../lib/reconcile'
 import { getRmsReviewData } from '../lib/sheet'
 import { applyLocalImages, assignLocalImage, carryLocalImages } from '../lib/imports'
+import type { WordParseResult } from '../lib/wordImport'
+import { applyWordOverlay, overlayFromParse, type MergeReport, type WordOverlay } from '../lib/wordMerge'
 
 export function useCatalogue() {
   const [source, setSource] = useState<SourceSnapshot>()
@@ -17,6 +19,11 @@ export function useCatalogue() {
   const sourceRef = useRef<SourceSnapshot | undefined>(undefined)
   const decisionsRef = useRef<Record<string, ArtworkDecision>>({})
   const syncingRef = useRef(false)
+  const overlayRef = useRef<WordOverlay | undefined>(undefined)
+  const [wordLists, setWordLists] = useState<{ files: string[]; importedAt: string }>()
+
+  /** Re-applies the imported Word lists on top of fresh Sheet data, so they survive every refresh. */
+  const withOverlay = (snapshot: SourceSnapshot) => overlayRef.current ? applyWordOverlay(snapshot, overlayRef.current).snapshot : snapshot
 
   useEffect(() => { sourceRef.current = source }, [source])
   useEffect(() => { decisionsRef.current = decisions }, [decisions])
@@ -32,7 +39,7 @@ export function useCatalogue() {
         const index = fetched.artists.findIndex((artist) => artist.id === local.id)
         if (index >= 0) fetched.artists[index] = local; else fetched.artists.push(local)
       }
-      const next = carryLocalImages(sourceRef.current, fetched)
+      const next = carryLocalImages(sourceRef.current, withOverlay(fetched))
       const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
       setSource(next)
       setDecisions(result.decisions)
@@ -55,8 +62,10 @@ export function useCatalogue() {
   useEffect(() => {
     let active = true
     void (async () => {
-      const [cached, storedDecisions, storedOverrides] = await Promise.all([db.source.get('latest'), db.decisions.toArray(), db.artistOverrides.toArray()])
+      const [cached, storedDecisions, storedOverrides, storedOverlay] = await Promise.all([db.source.get('latest'), db.decisions.toArray(), db.artistOverrides.toArray(), db.overlays.get('word')])
       if (!active) return
+      overlayRef.current = storedOverlay
+      if (storedOverlay) setWordLists({ files: storedOverlay.files, importedAt: storedOverlay.importedAt })
       if (cached) setSource(cached)
       const decisionMap = Object.fromEntries(storedDecisions.map((item) => [item.artworkId, item]))
       const overrideMap = Object.fromEntries(storedOverrides.map((item) => [item.artistId, item]))
@@ -101,7 +110,7 @@ export function useCatalogue() {
       const index = incoming.artists.findIndex((artist) => artist.id === local.id)
       if (index >= 0) incoming.artists[index] = local; else incoming.artists.push(local)
     }
-    const next = carryLocalImages(sourceRef.current, incoming, { keepIncomingPrices: options.finalList })
+    const next = carryLocalImages(sourceRef.current, withOverlay(incoming), { keepIncomingPrices: options.finalList })
     const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
     if (options.finalList) {
       for (const [artworkId, decision] of Object.entries(result.decisions)) {
@@ -208,6 +217,7 @@ export function useCatalogue() {
         firstName: patch.firstName ?? existing?.firstName ?? artist.firstName,
         surname: patch.surname ?? existing?.surname ?? artist.surname,
         youngArtist: patch.youngArtist ?? existing?.youngArtist ?? artist.youngArtist ?? false,
+        youngArtistSet: patch.youngArtist !== undefined || existing?.youngArtistSet,
         societyInitials: patch.societyInitials ?? existing?.societyInitials ?? '',
         awardText: patch.awardText ?? existing?.awardText ?? '',
       }
@@ -215,6 +225,32 @@ export function useCatalogue() {
       return { ...current, [artistId]: nextItem }
     })
   }, [])
+
+  /** Merges the confirmed Word lists into the cards: listed works included (Word title/medium/price), other works of listed artists excluded. */
+  const importWordLists = useCallback(async (parsed: WordParseResult): Promise<MergeReport> => {
+    const overlay = overlayFromParse(parsed)
+    const base = sourceRef.current ?? { id: 'latest' as const, syncedAt: new Date().toISOString(), artists: [] }
+    const merged = applyWordOverlay(base, overlay)
+    const next = carryLocalImages(base, merged.snapshot, { keepIncomingPrices: true })
+    const result = reconcileSource(base, next, decisionsRef.current)
+    for (const id of merged.include) if (result.decisions[id]) result.decisions[id] = { ...result.decisions[id], decision: 'included', manual: false }
+    for (const id of merged.exclude) if (result.decisions[id]) result.decisions[id] = { ...result.decisions[id], decision: 'excluded', manual: false }
+    overlayRef.current = overlay
+    setWordLists({ files: overlay.files, importedAt: overlay.importedAt })
+    setSource(next)
+    sourceRef.current = next
+    setDecisions(result.decisions)
+    decisionsRef.current = result.decisions
+    setChanges(result.changes)
+    await db.transaction('rw', db.source, db.decisions, db.overlays, async () => {
+      await db.overlays.put(overlay)
+      await db.source.put(next)
+      await db.decisions.clear()
+      await db.decisions.bulkPut(Object.values(result.decisions))
+    })
+    for (const [artistId, details] of Object.entries(merged.details)) setArtistOverride(artistId, details)
+    return merged.report
+  }, [setArtistOverride])
 
   const resetDecisions = useCallback(async () => {
     if (!sourceRef.current) return
@@ -229,5 +265,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setSculpture, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setSculpture, setArtistOverride, resetDecisions, importWordLists, wordLists }
 }

@@ -8,7 +8,8 @@ import { isSculpture, isYoungArtist } from './catalogueRules'
 
 export { isSculpture, isYoungArtist }
 
-const FONT = 'Times New Roman'
+/** Matches the secretary's lists and the printed catalogue (sans serif). Included with Microsoft 365. */
+const FONT = 'Avenir Next LT Pro'
 const PAGE_WIDTH = 8391
 const CONTENT_WIDTH = 6900
 const noBorders = { top: { style: BorderStyle.NONE }, bottom: { style: BorderStyle.NONE }, left: { style: BorderStyle.NONE }, right: { style: BorderStyle.NONE }, insideHorizontal: { style: BorderStyle.NONE }, insideVertical: { style: BorderStyle.NONE } }
@@ -66,6 +67,7 @@ export function catalogueSections(artists: ArtistSubmission[], decisions: Record
         heading: [name, override?.societyInitials?.trim().toLocaleUpperCase()].filter(Boolean).join(' '),
         awardText: awardLines(override?.awardText).join(' | '),
         artworks: artworks.map((artwork) => ({
+          artworkId: artwork.id,
           number: String(number++).padStart(3, '0'),
           description: artwork.medium ? `${artwork.title || 'Untitled'} (${artwork.medium})` : artwork.title || 'Untitled',
           price: artwork.price?.replace(/^£\s*/, '') ?? '',
@@ -89,15 +91,15 @@ export async function createPrintedCatalogueDocx(artists: ArtistSubmission[], de
     children.push(paragraph(section.title, { bold: true, size: 27, after: 300, keepNext: true }))
     for (const entry of section.entries) {
       const rows = [
-        new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.heading, { bold: true, before: 160, after: entry.awardText ? 0 : 65, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] }),
-        ...awardLines(entry.awardText).map((line, index, lines) => new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(line, { italic: true, after: index === lines.length - 1 ? 55 : 0, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] })),
+        new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.heading, { bold: true, before: 160, after: entry.awardText ? 0 : 65, keepNext: true })], 5050, 100), cell([paragraph('')], 1200)] }),
+        ...awardLines(entry.awardText).map((line, index, lines) => new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(line, { italic: true, after: index === lines.length - 1 ? 55 : 0, keepNext: true })], 5050, 100), cell([paragraph('')], 1200)] })),
         ...entry.artworks.map((artwork) => new TableRow({ cantSplit: true, children: [
           cell([paragraph(artwork.number, { align: AlignmentType.RIGHT })], 650),
-          cell([paragraph(artwork.description)], 5350, 100),
-          cell([paragraph(artwork.price, { align: AlignmentType.RIGHT })], 900),
+          cell([paragraph(artwork.description)], 5050, 100),
+          cell([paragraph(artwork.price, { align: AlignmentType.RIGHT })], 1200),
         ] })),
       ]
-      children.push(new Table({ width: { size: CONTENT_WIDTH, type: WidthType.DXA }, layout: TableLayoutType.FIXED, columnWidths: [650, 5350, 900], borders: noBorders, rows }))
+      children.push(new Table({ width: { size: CONTENT_WIDTH, type: WidthType.DXA }, layout: TableLayoutType.FIXED, columnWidths: [650, 5050, 1200], borders: noBorders, rows }))
     }
   })
   return Packer.toBlob(new Document({

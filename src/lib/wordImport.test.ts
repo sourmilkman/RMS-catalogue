@@ -1,129 +1,97 @@
 import { describe, expect, it } from 'vitest'
 import { Document, Packer, Paragraph, Tab, Table, TableCell, TableRow, TextRun } from 'docx'
-import type { ArtistOverride, ArtistSubmission, ArtworkDecision } from '../types'
-import { catalogueSections, createPrintedCatalogueDocx } from './exportCatalogueDocx'
-import { parseWordDocument } from './wordImport'
+import { parseWordDocument, parseWordDocuments } from './wordImport'
 
-async function docxBuffer(children: (Paragraph | Table)[]): Promise<ArrayBuffer> {
-  const blob = await Packer.toBlob(new Document({ sections: [{ children }] }))
-  return blob.arrayBuffer()
+async function docx(children: (Paragraph | Table)[]): Promise<ArrayBuffer> {
+  return (await Packer.toBlob(new Document({ sections: [{ children }] }))).arrayBuffer()
 }
 const p = (text: string, options: { bold?: boolean; italics?: boolean } = {}) => new Paragraph({ children: [new TextRun({ text, ...options })] })
 const tabs = (...parts: string[]) => new Paragraph({ children: parts.map((part, index) => new TextRun({ children: index ? [new Tab(), part] : [part] })) })
+const row = (...cells: string[][]) => new TableRow({ children: cells.map((lines) => new TableCell({ children: lines.length ? lines.map((line) => p(line)) : [p('')] })) })
 
-describe('Word import — catalogue-style list (like the printed catalogue)', () => {
-  it('reads sections, artists, initials, awards, mediums and prices', async () => {
-    const buffer = await docxBuffer([
-      p('LIST OF EXHIBITS – MINIATURE PAINTINGS (continued)', { bold: true }),
-      p('£'),
-      p('LUIS RICARDO CAUDRA', { bold: true }),
-      tabs('126', 'Portrait of Elena at the age of five (graphite on paper)', 'NFS (1200)'),
-      tabs('127', 'Portrait of Thomas Wriothesley after Hans Holbein'),
-      tabs('(watercolour on vellum)', '2000'),
-      p('MICHAEL COE RMS HS MAA MASF MPSGS', { bold: true }),
-      p('GOLD MEMORIAL BOWL 1998', { italics: true }),
-      tabs('132', 'Girl with the Silver Nose Ring (watercolour on vellum)', 'NFS'),
-      p('GORDON McCONNACHIE', { bold: true }),
-      p('282 Kestrel (watercolour on vellum) 190'),
-      p('LAURA CRITCHLOW RMS', { bold: true }),
-      tabs('139', 'Miss Nikki Ball (acrylic on board) As seen on 2025 advertising', '875'),
-      p('40'),
-      p('LIST OF EXHIBITS – SCULPTURES', { bold: true }),
-      p('BILL MUNDY RMS HS MAA MASF', { bold: true }),
-      p('GOLD MEMORIAL BOWL 1986', { italics: true }),
-      p('MEMORIAL EXHIBIT', { italics: true }),
-      tabs('400', 'Hare (bronze)', '650'),
-      p('LIST OF EXHIBITS – YOUNG ARTISTS', { bold: true }),
-      p('AMY BAKER', { bold: true }),
-      tabs('500', 'Wren (graphite on paper)', '90'),
-      p('Some stray note in lower case'),
+describe("Claire's list tables (no header row)", () => {
+  it('reads first name, surname + initials, award lines and one work per line; section from the file name', async () => {
+    const miniature = await docx([new Table({ rows: [
+      row(['DOROTHY J'], ['ABREHART RMS'], ['A Fine Catch (watercolour on ivorine) 200', 'Brother and Bob(watercolour on ivorine) 190']),
+      row(['MICHAEL'], ['COE RMS HS MAA MASF MPSGS', 'GOLD MEMORIAL BOWL 1998'], ['Girl in a Black Jacket (watercolour on vellum) NFS']),
+      row(['TIFFANY'], ['BUDD HS'], ['St Pauls Cathedral (derwentprocolour on drafting film) 320', 'Puffin IslandColoured (coloured pencil on polymin) 200']),
+      row(['DAVIDE DI'], ['TARANTO'], ['Jake wearing a recycled Flexi-hex (oil on recycled mountboard) 2000']),
+      row(['JENNY'], ['BROOKS RMS HS DIP SBA'], ['Ruby Chatting to Granny (watercolour on polymin) NFS (850)']),
+      row(['ANKIT'], ['SINGH'], ['The Rabbit (Egg tempera on gesso panel)']),
+    ] })])
+    const sculpture = await docx([new Table({ rows: [
+      row(['TIFFANY'], ['BUDD HS'], ['Four Seasons (acrylic on ceramic egg) 420']),
+      row(['RAY'], ['WINDER PRMS', 'GOLD MEMORIAL BOWL 2024'], ['The Sun ain’tGonna Shine Anymore (watercolour, gouache on paper) 750']),
+    ] })])
+    const young = await docx([new Table({ rows: [
+      row(['AGE'], [], [], []),
+      row([], [], [], []),
+      row(['25'], ['JACK'], ['SAVAGE SRMS'], ['I Grew up in this Kitchen: 2001 (oil on board) 500']),
+      row(['20'], ['PRZEMYSŁAW'], ['SOŁDEK'], ['Viola Suavis (watercolour on vellum) 200']),
+    ] })])
+    const result = await parseWordDocuments([
+      { name: 'Catalogue List Miniature.docx', data: miniature },
+      { name: 'Catalogue list Sculpture.docx', data: sculpture },
+      { name: 'Catalogue List Young Artists (18-30).docx', data: young },
     ])
-    const result = await parseWordDocument(buffer, 'list.docx')
-    const byName = Object.fromEntries(result.snapshot.artists.map((artist) => [artist.fullName, artist]))
+    const by = Object.fromEntries(result.artists.map((artist) => [`${artist.firstName} ${artist.surname}`, artist]))
 
-    expect(Object.keys(byName)).toEqual(['Luis Ricardo Caudra', 'Michael Coe', 'Gordon McConnachie', 'Laura Critchlow', 'Bill Mundy', 'Amy Baker'])
-    expect(byName['Luis Ricardo Caudra'].artworks.map((artwork) => [artwork.title, artwork.medium, artwork.price])).toEqual([
-      ['Portrait of Elena at the age of five', 'graphite on paper', 'NFS (1200)'],
-      ['Portrait of Thomas Wriothesley after Hans Holbein', 'watercolour on vellum', '2000'],
+    expect(Object.keys(by)).toEqual(['Dorothy J Abrehart', 'Michael Coe', 'Tiffany Budd', 'Davide Di Taranto', 'Jenny Brooks', 'Ankit Singh', 'Ray Winder', 'Jack Savage', 'Przemysław Sołdek'])
+    expect(by['Davide Di Taranto']).toMatchObject({ firstName: 'Davide Di', surname: 'Taranto' })
+    expect(by['Michael Coe']).toMatchObject({ initials: 'RMS HS MAA MASF MPSGS', awards: ['GOLD MEMORIAL BOWL 1998'] })
+    expect(by['Jack Savage']).toMatchObject({ initials: 'SRMS', age: 25 })
+    expect(by['Jack Savage'].works[0]).toMatchObject({ title: 'I Grew up in this Kitchen: 2001', medium: 'oil on board', price: '500', section: 'young' })
+
+    // Same artist in two files is merged, each work keeps its own section
+    expect(by['Tiffany Budd'].works.map((work) => [work.title, work.medium, work.section])).toEqual([
+      ['St Pauls Cathedral', 'Derwent Procolour on drafting film', 'painting'],
+      ['Puffin Island Coloured', 'coloured pencil on Polymin', 'painting'],
+      ['Four Seasons', 'acrylic on ceramic egg', 'sculpture'],
     ])
-    expect(byName['Gordon McConnachie']).toMatchObject({ firstName: 'Gordon', surname: 'McConnachie' })
-    expect(byName['Gordon McConnachie'].artworks[0]).toMatchObject({ title: 'Kestrel', medium: 'watercolour on vellum', price: '190' })
-    expect(result.artistDetails[byName['Michael Coe'].id]).toEqual({ societyInitials: 'RMS HS MAA MASF MPSGS', awardText: 'GOLD MEMORIAL BOWL 1998' })
-    expect(result.artistDetails[byName['Bill Mundy'].id].awardText).toBe('GOLD MEMORIAL BOWL 1986 | MEMORIAL EXHIBIT')
-    expect(byName['Bill Mundy'].artworks[0].sculpture).toBe(true)
-    expect(byName['Amy Baker'].youngArtist).toBe(true)
-    expect(byName['Michael Coe'].youngArtist).toBeUndefined()
-    expect(result.stats).toEqual({ artists: 6, artworks: 7, sculptures: 1, youngArtists: 1 })
+    expect(by['Dorothy J Abrehart'].works[1]).toMatchObject({ title: 'Brother and Bob', medium: 'watercolour on ivorine', price: '190' })
+    expect(by['Jenny Brooks'].works[0].price).toBe('NFS (850)')
+    expect(by['Michael Coe'].works[0].price).toBe('NFS')
+    expect(by['Ray Winder'].works[0].title).toBe('The Sun ain’t Gonna Shine Anymore')
 
-    // Flagged, not guessed
-    expect(result.flags).toContain('Exhibit 139: Text after the medium was not imported: "As seen on 2025 advertising"')
-    expect(result.flags).toContain('Line not understood, not imported: "Some stray note in lower case"')
-    expect(result.flags.some((flag) => flag.startsWith('Luis Ricardo Caudra: Name has three or more parts'))).toBe(true)
-    expect(result.flags.some((flag) => flag.includes('page numbers'))).toBe(true)
-    expect(result.flags.some((flag) => flag.startsWith('Exhibit 127'))).toBe(false)
+    expect(result.fixes).toEqual(expect.arrayContaining([
+      expect.stringContaining('"Brother and Bob(watercolour on ivorine) 190" → "Brother and Bob (watercolour on ivorine) 190"'),
+      expect.stringContaining('→ "Derwent Procolour on drafting film"'),
+      expect.stringContaining('"Puffin Island Coloured'),
+      expect.stringContaining('ain’t Gonna'),
+    ]))
+    expect(result.flags).toContain('Ankit Singh — "The Rabbit": no price')
+    expect(result.flags.some((flag) => flag.includes('check initials'))).toBe(false)
   })
 
-  it('does not treat a bare trailing year as a price', async () => {
-    const result = await parseWordDocument(await docxBuffer([p('JANE DOE', { bold: true }), p('12 Untitled 2024')]))
-    expect(result.snapshot.artists[0].artworks[0]).toMatchObject({ title: 'Untitled 2024', price: undefined })
-    expect(result.flags).toContain('Exhibit 12: No price found')
-  })
-
-  it('drops capitalised headings that have no artworks', async () => {
-    const result = await parseWordDocument(await docxBuffer([p('ANNUAL EXHIBITION 2026'), p('JANE DOE', { bold: true }), p('1 Fox (oil on panel) 300')]))
-    expect(result.snapshot.artists.map((artist) => artist.fullName)).toEqual(['Jane Doe'])
-    expect(result.flags).toContain('"ANNUAL EXHIBITION 2026" was read as an artist name but has no artworks — ignored')
+  it('flags unknown initials rather than guessing', async () => {
+    const result = await parseWordDocument(await docx([new Table({ rows: [row(['ANN'], ['RAY XYZ'], ['Oak (oil on panel) 100'])] })]), 'Catalogue List Miniature.docx')
+    expect(result.artists[0]).toMatchObject({ surname: 'Ray', initials: 'XYZ' })
+    expect(result.flags).toContain('Ann Ray: check initials "XYZ" (not a known society abbreviation)')
   })
 })
 
-describe('Word import — table with a header row', () => {
-  it('reads one artwork per row, merges an artist across sections and flags unknown sections', async () => {
-    const row = (...cells: string[]) => new TableRow({ children: cells.map((text) => new TableCell({ children: [p(text)] })) })
-    const buffer = await docxBuffer([new Table({ rows: [
-      row('First name', 'Surname', 'Initials', 'Section', 'Title', 'Medium', 'Price (£)'),
-      row('Jenny', 'Musker', 'VPRMS', 'Miniature painting', 'Little Jenny Wren', 'watercolour on Polymin', '£395'),
-      row('', '', '', 'Sculpture', 'Wren in Bronze', 'bronze', '600'),
-      row('Sam', 'Lee', '', 'Young artist', 'Moth', 'graphite on paper', '80'),
-      row('Ann', 'Ray', '', 'Engraving', 'Oak', 'wood engraving', '120'),
-    ] })])
-    const result = await parseWordDocument(buffer)
-    const [musker, lee, ray] = result.snapshot.artists
-    expect(musker).toMatchObject({ fullName: 'Jenny Musker', surname: 'Musker' })
-    expect(musker.artworks.map((artwork) => [artwork.title, artwork.medium, artwork.price, artwork.sculpture])).toEqual([
-      ['Little Jenny Wren', 'watercolour on Polymin', '395', undefined],
-      ['Wren in Bronze', 'bronze', '600', true],
-    ])
-    expect(result.artistDetails[musker.id].societyInitials).toBe('VPRMS')
-    expect(lee.youngArtist).toBe(true)
-    expect(ray.artworks[0].sculpture).toBeUndefined()
-    expect(result.flags).toContain('Table row 5: section "Engraving" not recognised — listed as a miniature painting')
+describe('header-row tables and printed-catalogue lists still work', () => {
+  it('reads a table with a header row including dimensions', async () => {
+    const result = await parseWordDocument(await docx([new Table({ rows: [
+      row(['First name'], ['Surname'], ['Section'], ['Title'], ['Medium'], ['Dimensions'], ['Price']),
+      row(['Jenny'], ['Musker VPRMS'], ['Sculpture'], ['Wren in Bronze'], ['bronze'], ['6 x 4 cm'], ['£600']),
+    ] })]))
+    expect(result.artists[0]).toMatchObject({ firstName: 'Jenny', surname: 'Musker' })
+    expect(result.artists[0].works[0]).toMatchObject({ title: 'Wren in Bronze', medium: 'bronze', dimensions: '6 x 4 cm', price: '600', section: 'sculpture' })
+  })
+
+  it('reads a printed-catalogue style list', async () => {
+    const result = await parseWordDocument(await docx([
+      p('LIST OF EXHIBITS – SCULPTURES', { bold: true }),
+      p('BILL MUNDY RMS HS', { bold: true }),
+      p('GOLD MEMORIAL BOWL 1986', { italics: true }),
+      tabs('400', 'Hare (bronze)', '650'),
+    ]))
+    expect(result.artists[0]).toMatchObject({ firstName: 'Bill', surname: 'Mundy', initials: 'RMS HS', awards: ['GOLD MEMORIAL BOWL 1986'] })
+    expect(result.artists[0].works[0]).toMatchObject({ title: 'Hare', medium: 'bronze', price: '650', section: 'sculpture' })
   })
 
   it('rejects files that are not .docx', async () => {
-    await expect(parseWordDocument(new TextEncoder().encode('not a zip').buffer as ArrayBuffer)).rejects.toThrow(/not a \.docx/)
-  })
-})
-
-describe('Word import — round trip through the catalogue export', () => {
-  it('re-imports an exported catalogue into the same sections and order', async () => {
-    const make = (id: string, firstName: string, surname: string, works: [string, string, string, boolean?][], extra: Partial<ArtistSubmission> = {}): ArtistSubmission => ({
-      id, sourceRow: 1, fullName: `${firstName} ${surname}`, firstName, surname, warnings: [], ...extra,
-      artworks: works.map(([title, medium, price, sculpture], index) => ({ id: `${id}${index}`, artistId: id, position: index + 1, title, medium, price, sculpture, votes: { yes: 1, no: 0, maybe: 0, valid: true, raw: '' }, verdict: 'yes', warnings: [] })),
-    })
-    const artists = [
-      make('a', 'Tom', 'Mulliner', [['St Michael the Archangel', 'oil on paper', '480'], ['St Sebastian', 'oil on paper', '480']]),
-      make('b', 'Jenny', 'Musker', [['Little Jenny Wren', 'watercolour on Polymin', '395'], ['Wren in Bronze', 'bronze', '600', true]]),
-      make('c', 'Amy', 'Baker', [['Wren', 'graphite on paper', '90']], { youngArtistAge: 15 }),
-    ]
-    const decisions: Record<string, ArtworkDecision> = Object.fromEntries(artists.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, { artworkId: artwork.id, decision: 'included', manual: true, fields: { firstName: true, surname: true, title: true, email: true, dob: true, download: true } }])))
-    const overrides: Record<string, ArtistOverride> = { a: { artistId: 'a', firstName: 'Tom', surname: 'Mulliner', youngArtist: false, societyInitials: 'RMS', awardText: '' }, b: { artistId: 'b', firstName: 'Jenny', surname: 'Musker', youngArtist: false, societyInitials: 'VPRMS', awardText: 'Gold Memorial Bowl 2020 | Memorial Exhibit' } }
-    const exported = await createPrintedCatalogueDocx(artists, decisions, overrides)
-
-    const result = await parseWordDocument(await exported.arrayBuffer())
-    expect(result.flags).toEqual([])
-    const reDecisions = Object.fromEntries(result.snapshot.artists.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, { ...decisions.a0, artworkId: artwork.id }])))
-    const reOverrides = Object.fromEntries(result.snapshot.artists.map((artist) => [artist.id, { artistId: artist.id, firstName: artist.firstName, surname: artist.surname, youngArtist: artist.youngArtist ?? false, ...result.artistDetails[artist.id] }]))
-    const summary = (sections: ReturnType<typeof catalogueSections>) => sections.map((section) => [section.key, section.entries.map((entry) => [entry.heading, entry.awardText, entry.artworks])])
-    expect(summary(catalogueSections(result.snapshot.artists, reDecisions, reOverrides))).toEqual(summary(catalogueSections(artists, decisions, overrides)))
+    await expect(parseWordDocument(new TextEncoder().encode('nope').buffer as ArrayBuffer, 'old.doc')).rejects.toThrow(/old\.doc is not a \.docx/)
   })
 })

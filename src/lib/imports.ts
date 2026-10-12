@@ -110,9 +110,10 @@ export function carryLocalImages(previous: SourceSnapshot | undefined, next: Sou
     artists: next.artists.map((artist) => ({
       ...artist,
       artworks: artist.artworks.map((artwork) => {
+        // Title fallback is limited to the same artist: many artists have a "Wren" or a "Kingfisher".
         const match = prior.find((item) => item.id === artwork.id)
           ?? prior.find((item) => item.imageUrl && item.imageUrl === artwork.imageUrl)
-          ?? prior.find((item) => item.title && normalizeIdentity(item.title) === normalizeIdentity(artwork.title))
+          ?? prior.find((item) => item.artistId === artwork.artistId && item.title && normalizeIdentity(item.title) === normalizeIdentity(artwork.title))
         const withImage = match?.localImage ? withLocalImage(artwork, new File([match.localImage], match.localImageName ?? 'local-image', { type: match.localImage.type })) : artwork
         if (options.keepIncomingPrices && artwork.price) return withImage
         return match?.price ? { ...withImage, price: match.price } : withImage

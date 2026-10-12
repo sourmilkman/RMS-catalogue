@@ -11,6 +11,7 @@ import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClien
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
 import { isSculpture, isYoungArtist as isYoungArtistRule } from './lib/catalogueRules'
 import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
+import type { MergeReport } from './lib/wordMerge'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
 
 const BUILD = `${__APP_VERSION__} · ${__BUILD_REF__}`
@@ -39,6 +40,31 @@ function useArtworkImage(artwork?: ArtworkSubmission): string | undefined {
   const source = useMemo(() => artwork?.localImage ? URL.createObjectURL(artwork.localImage) : artwork?.imageUrl, [artwork])
   useEffect(() => () => { if (artwork?.localImage && source) URL.revokeObjectURL(source) }, [artwork?.localImage, source])
   return source
+}
+
+function ReviewGroup({ title, items, note }: { title: string; items: string[]; note?: string }) {
+  if (!items.length) return null
+  return <details className="review-group"><summary>{title} <b>{items.length}</b></summary>{note && <p>{note}</p>}<ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul></details>
+}
+
+function WordReviewPanel({ review, onExclude, onDismiss }: { review: { report: MergeReport; flags: string[]; fixes: string[] }; onExclude: () => void; onDismiss: () => void }) {
+  const { report, flags, fixes } = review
+  return (
+    <section className="word-review" aria-label="Word import review">
+      <header><AlertTriangle size={17} /><h2>Word import — please review</h2><button onClick={onDismiss}>Dismiss</button></header>
+      <p>{report.matchedArtists} artists matched existing cards · {report.newArtists.length} new · {report.matchedWorks} works matched · {report.addedWorks} works added</p>
+      <ReviewGroup title="Name matches to confirm" items={report.nameMatches} note="Word name → submission name. If one is wrong, correct the name in the Word file and import again." />
+      <ReviewGroup title="Titles matched approximately" items={report.closeTitles} note="The Word title is used in the catalogue; the submission image is kept." />
+      <ReviewGroup title="Items to check" items={flags} />
+      <ReviewGroup title="Duplicate submissions" items={report.duplicates} note="The same title was submitted twice. The second card is excluded; open it if you want to use its image instead." />
+      <ReviewGroup title="Automatic text fixes" items={fixes} note="Spacing and brand-name capitals corrected while importing. Your Word files are not changed." />
+      <ReviewGroup title="New artist cards (no image yet)" items={report.newArtists} />
+      {report.notInLists.length > 0 && <div className="review-group not-listed">
+        <details><summary>Submissions not in the Word lists <b>{report.notInLists.length}</b></summary><ul>{report.notInLists.map((item) => <li key={item.artistId}>{item.name} — {item.artworkIds.length} work{item.artworkIds.length === 1 ? '' : 's'}</li>)}</ul></details>
+        <button onClick={onExclude}>Exclude these from the catalogue</button>
+      </div>}
+    </section>
+  )
 }
 
 function ImagePreview({ artwork, onOpen }: { artwork: ArtworkSubmission; onOpen: () => void }) {
@@ -90,11 +116,12 @@ export default function App() {
   const [lightbox, setLightbox] = useState<ArtworkSubmission>()
   const [exporting, setExporting] = useState(false)
   const [exportingCatalogue, setExportingCatalogue] = useState(false)
+  const [exportingWebsite, setExportingWebsite] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
   const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
   const [importNotice, setImportNotice] = useState<string>()
-  const [wordFlags, setWordFlags] = useState<string[]>([])
+  const [wordReview, setWordReview] = useState<{ report: MergeReport; flags: string[]; fixes: string[] }>()
   const initialExpansion = useRef(false)
   const spreadsheetInput = useRef<HTMLInputElement>(null)
   const wordInput = useRef<HTMLInputElement>(null)
@@ -211,6 +238,25 @@ export default function App() {
     finally { setExportingCatalogue(false) }
   }
 
+  const exportWebsite = async () => {
+    if (!counts.included) { window.alert('Include at least one artwork before exporting.'); return }
+    setExportingWebsite(true)
+    try {
+      const { downloadWebsiteWorkbook, websiteRows, websiteValues, WEBSITE_HEADER } = await import('./lib/exportWebsite')
+      const rows = websiteRows(artists, catalogue.decisions, catalogue.overrides)
+      const missing = rows.filter((row) => !row.imageUrl && !row.localImage).length
+      await downloadWebsiteWorkbook(rows)
+      if (hasGoogleClientId()) {
+        try {
+          const { exportWebsiteGoogleSheet } = await import('./lib/googleSheets')
+          setBackupUrl(await exportWebsiteGoogleSheet(WEBSITE_HEADER, rows, websiteValues, uploadDriveImages))
+        } catch (caught) { window.alert(`The Excel file was saved, but the Google Sheet could not be updated: ${caught instanceof Error ? caught.message : 'unknown error'}`) }
+      }
+      setImportNotice(`Website sheet: ${rows.length} artworks numbered as in the catalogue.${missing ? ` ${missing} have no image yet.` : ''}${hasGoogleClientId() ? '' : ' Saved as Excel — set up Google (left panel) to also update the Google Sheet.'}`)
+    } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Website sheet export failed.') }
+    finally { setExportingWebsite(false) }
+  }
+
   const useGoogleClientId = () => {
     saveGoogleClientId()
     setGoogleSetupMessage('Client ID saved on this device. You are ready to export.')
@@ -230,21 +276,39 @@ export default function App() {
     finally { if (spreadsheetInput.current) spreadsheetInput.current.value = '' }
   }
 
-  const importWordDocument = async (file?: File) => {
-    if (!file) return
+  const importWordDocuments = async (fileList: FileList | null) => {
+    const files = [...(fileList ?? [])]
+    if (!files.length) return
     try {
-      const { parseWordDocument } = await import('./lib/wordImport')
-      const result = await parseWordDocument(await file.arrayBuffer(), file.name)
-      const { stats, flags } = result
-      const flagText = flags.length ? `\n\n${flags.length} item${flags.length === 1 ? '' : 's'} to check (also shown after import):\n• ${flags.slice(0, 8).join('\n• ')}${flags.length > 8 ? `\n…and ${flags.length - 8} more` : ''}` : '\n\nEverything was read cleanly.'
-      const message = `${file.name}\n\nFound ${stats.artists} artists and ${stats.artworks} artworks — ${stats.sculptures} sculpture${stats.sculptures === 1 ? '' : 's'}, ${stats.youngArtists} young artist${stats.youngArtists === 1 ? '' : 's'}.${flagText}\n\nThis replaces the current catalogue data with the Word document (locally added entry forms are kept) and marks every artwork as Include. Continue?`
+      const [{ parseWordDocuments }, { applyWordOverlay }] = await Promise.all([import('./lib/wordImport'), import('./lib/wordMerge')])
+      const parsed = await parseWordDocuments(await Promise.all(files.map(async (file) => ({ name: file.name, data: await file.arrayBuffer() }))))
+      const preview = applyWordOverlay(catalogue.source ?? { id: 'latest', syncedAt: new Date().toISOString(), artists: [] }, parsed).report
+      const works = parsed.artists.reduce((sum, artist) => sum + artist.works.length, 0)
+      const message = [
+        `${files.length} Word file${files.length === 1 ? '' : 's'}: ${files.map((file) => file.name).join(', ')}`,
+        '',
+        `Found ${parsed.artists.length} artists and ${works} artworks.`,
+        `• ${preview.matchedArtists} artists match existing cards (${preview.matchedWorks} works matched, ${preview.addedWorks} added)`,
+        `• ${preview.newArtists.length} new artist cards`,
+        `• ${preview.nameMatches.length + preview.closeTitles.length} near-matches, ${parsed.fixes.length} text fixes and ${parsed.flags.length} items to check — listed after import`,
+        `• ${preview.notInLists.length} submissions are not in these lists (left unchanged; you can exclude them after import)`,
+        '',
+        'Listed works will be marked Include with the Word title, medium and price; other works by listed artists will be marked Exclude. Images and votes are kept. Continue?',
+      ].join('\n')
       if (!window.confirm(message)) return
-      await catalogue.importSource(result.snapshot, { finalList: true })
-      for (const [artistId, details] of Object.entries(result.artistDetails)) catalogue.setArtistOverride(artistId, details)
-      setWordFlags(flags)
-      setImportNotice(`Imported ${stats.artists} artists and ${stats.artworks} artworks from ${file.name}.${flags.length ? ` ${flags.length} item${flags.length === 1 ? '' : 's'} need checking — listed below and on the artwork cards.` : ''}`)
+      const report = await catalogue.importWordLists(parsed)
+      setWordReview({ report, flags: parsed.flags, fixes: parsed.fixes })
+      setImportNotice(`Merged ${parsed.artists.length} artists and ${works} artworks from ${files.length} Word file${files.length === 1 ? '' : 's'}. Review the list below.`)
     } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Word import failed.') }
     finally { if (wordInput.current) wordInput.current.value = '' }
+  }
+
+  const excludeNotInLists = () => {
+    if (!wordReview) return
+    const ids = wordReview.report.notInLists.flatMap((item) => item.artworkIds)
+    if (!window.confirm(`Mark ${ids.length} artworks by ${wordReview.report.notInLists.length} artists who are not in the Word lists as Exclude?`)) return
+    ids.forEach((id) => catalogue.setDecision(id, 'excluded'))
+    setWordReview({ ...wordReview, report: { ...wordReview.report, notInLists: [] } })
   }
 
   const importSheetLink = async () => {
@@ -317,6 +381,9 @@ export default function App() {
           <button className="button secondary" onClick={() => void exportCatalogueLayout()} disabled={exportingCatalogue || !counts.included}>
             <Download size={17} />{exportingCatalogue ? 'Creating catalogue…' : 'Export Catalogue Word'}
           </button>
+          <button className="button secondary" onClick={() => void exportWebsite()} disabled={exportingWebsite || !counts.included}>
+            <FileSpreadsheet size={17} />{exportingWebsite ? 'Creating sheet…' : 'Export Website Sheet'}
+          </button>
         </div>
       </header>
 
@@ -324,7 +391,7 @@ export default function App() {
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
       {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
-      {wordFlags.length > 0 && <details className="change-banner word-flags"><summary><AlertTriangle size={17} />{wordFlags.length} Word import item{wordFlags.length === 1 ? '' : 's'} to check</summary><ul>{wordFlags.map((flag, index) => <li key={index}>{flag}</li>)}</ul><button onClick={() => setWordFlags([])}>Dismiss</button></details>}
+      {wordReview && <WordReviewPanel review={wordReview} onExclude={excludeNotInLists} onDismiss={() => setWordReview(undefined)} />}
       {importNotice && <div className="change-banner import-banner"><Check size={17} /><span>{importNotice}</span><button onClick={() => setImportNotice(undefined)} aria-label="Dismiss import message"><X size={15} /></button></div>}
 
       <section className="summary" aria-label="Catalogue summary">
@@ -341,8 +408,9 @@ export default function App() {
           <div className="import-panel">
             <div className="filter-title"><FileUp size={15} /><h2>Import offline data</h2></div>
             <p>Merge another catalogue while preserving existing decisions.</p>
-            <button className="word-import" onClick={() => wordInput.current?.click()}><FileText size={14} />Import Word document</button>
-            <input ref={wordInput} className="visually-hidden" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void importWordDocument(event.target.files?.[0])} />
+            <button className="word-import" onClick={() => wordInput.current?.click()}><FileText size={14} />Import Word lists (select all files)</button>
+            <input ref={wordInput} className="visually-hidden" type="file" multiple accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void importWordDocuments(event.target.files)} />
+            {catalogue.wordLists && <small>Word lists merged: {catalogue.wordLists.files.length} file{catalogue.wordLists.files.length === 1 ? '' : 's'}, {new Date(catalogue.wordLists.importedAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })}. Import again (all files together) after any correction.</small>}
             <button onClick={() => spreadsheetInput.current?.click()}><FileUp size={14} />Import spreadsheet file</button>
             <input ref={spreadsheetInput} className="visually-hidden" type="file" accept=".csv,.tsv,.txt,.html,.htm,.xls,.xlsx,.xlsm,.xlsb,.ods,.fods" onChange={(event) => void importSpreadsheet(event.target.files?.[0])} />
             <button onClick={() => void importSheetLink()}><Link2 size={14} />Import Google Sheets link</button>
@@ -415,7 +483,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="artist-meta">
-                      <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
+                      <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtist !== undefined ? 'Set by the Word lists — tick or untick to override' : artist.youngArtistAge !== undefined ? 'Age supplied by the submission' : undefined}><input type="checkbox" checked={isYoungArtist} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
                       <span>{artist.artworks.length} submitted · {includedCount} included</span>
                       {warningCount > 0 && <span className="warning-count"><AlertTriangle size={14} />{warningCount} warning{warningCount === 1 ? '' : 's'}</span>}
                     </div>

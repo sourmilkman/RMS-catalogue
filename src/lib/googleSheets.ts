@@ -63,6 +63,16 @@ async function request<T>(url: string, token: string, init?: RequestInit): Promi
   return response.json() as Promise<T>
 }
 
+async function backupSpreadsheet(token: string): Promise<string> {
+  let spreadsheetId = localStorage.getItem(SPREADSHEET_ID_KEY) || await findBackupSpreadsheet(token)
+  if (!spreadsheetId) {
+    const created = await request<{ spreadsheetId: string }>('https://sheets.googleapis.com/v4/spreadsheets', token, { method: 'POST', body: JSON.stringify({ properties: { title: 'RMS Catalogue Selection Backup' }, sheets: [{ properties: { title: 'Selection' } }] }) })
+    spreadsheetId = created.spreadsheetId
+  }
+  localStorage.setItem(SPREADSHEET_ID_KEY, spreadsheetId)
+  return spreadsheetId
+}
+
 async function findBackupSpreadsheet(token: string): Promise<string | undefined> {
   const name = encodeURIComponent("name = 'RMS Catalogue Selection Backup' and trashed = false")
   const found = await request<{ files: { id: string }[] }>(`https://www.googleapis.com/drive/v3/files?q=${name}&orderBy=createdTime%20desc&pageSize=1&fields=files(id)`, token)
@@ -77,7 +87,9 @@ async function driveImageFolder(token: string): Promise<string> {
   return created.id
 }
 
-async function uploadLocalImages(rows: ExportRow[], token: string): Promise<ExportRow[]> {
+type ImageRow = { artworkId: string; localImage?: Blob; localImageName?: string; driveImageUrl?: string }
+
+async function uploadLocalImages<T extends ImageRow>(rows: T[], token: string): Promise<T[]> {
   const localRows = rows.filter((row) => row.localImage)
   if (!localRows.length) return rows
   const folderId = await driveImageFolder(token)
@@ -110,4 +122,23 @@ export async function exportBackupSheet(rows: ExportRow[], uploadImages = false)
     throw error
   }
   return { spreadsheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`, rows: exportedRows }
+}
+
+/** Writes the website rows to a "Website" tab of the RMS backup spreadsheet (created if needed). */
+export async function exportWebsiteGoogleSheet<T extends ImageRow>(header: string[], rows: T[], toValues: (row: T) => string[], uploadImages = false): Promise<string> {
+  const token = await accessToken()
+  const exportedRows = uploadImages ? await uploadLocalImages(rows, token) : rows
+  const spreadsheetId = await backupSpreadsheet(token)
+  try {
+    const meta = await request<{ sheets: { properties: { title: string } }[] }>(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets.properties.title`, token)
+    if (!meta.sheets.some((sheet) => sheet.properties.title === 'Website')) {
+      await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, token, { method: 'POST', body: JSON.stringify({ requests: [{ addSheet: { properties: { title: 'Website' } } }] }) })
+    }
+    await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Website:clear`, token, { method: 'POST', body: '{}' })
+    await request(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Website!A1?valueInputOption=RAW`, token, { method: 'PUT', body: JSON.stringify({ range: 'Website!A1', majorDimension: 'ROWS', values: [header, ...exportedRows.map(toValues)] }) })
+  } catch (error) {
+    localStorage.removeItem(SPREADSHEET_ID_KEY)
+    throw error
+  }
+  return `https://docs.google.com/spreadsheets/d/${spreadsheetId}/edit`
 }

@@ -1,32 +1,27 @@
 import JSZip from 'jszip'
-import type { ArtistSubmission, ArtworkSubmission, DataWarning, SourceSnapshot } from '../types'
-import { normalizeIdentity, stableHash } from './identity'
 import { splitName } from './names'
 
 /**
- * Reads the final exhibition list from a Word (.docx) file.
+ * Reads the final exhibition lists from Word (.docx) files.
  *
- * Two layouts are understood:
- *  1. A table whose first row is a header (First name / Surname / Artist, Title, Medium, Price, Section …), one artwork per row.
- *  2. A catalogue-style list, as printed: section headings ("LIST OF EXHIBITS – SCULPTURES"), artist name lines
- *     (bold or capitals, society initials at the end), optional italic award lines, then numbered artwork lines
- *     "126  Title (medium)  price". Lines may be plain paragraphs (tab-separated) or table rows.
+ * Layouts understood:
+ *  1. Claire's list tables (no header row): [Age] | FIRST NAME | SURNAME INITIALS (+ award lines) | one artwork per line
+ *     "Title (medium) price". The section comes from the file name (…Sculpture…, …Young Artists…, otherwise Miniature).
+ *  2. A table whose first row is a header (First name / Surname / Artist, Title, Medium, Price, Section …), one artwork per row.
+ *  3. A catalogue-style list, as printed: section headings, artist lines, italic award lines, numbered artwork lines.
  *
- * Nothing is guessed: anything that cannot be read unambiguously is reported in `flags` (and on the artwork card).
+ * Nothing is guessed: anything that cannot be read unambiguously is reported in `flags`; every automatic text
+ * correction is reported in `fixes`.
  */
 
-type Section = 'painting' | 'sculpture' | 'young'
+export type Section = 'painting' | 'sculpture' | 'young'
 
-interface Line { cells: string[]; raw: string[]; bold: boolean; italic: boolean }
+interface Line { cells: string[]; raw: string[]; cellLines: string[][]; bold: boolean; italic: boolean }
 type Block = { kind: 'line'; line: Line } | { kind: 'table'; rows: Line[] }
 
-export interface WordImportResult {
-  snapshot: SourceSnapshot
-  /** Society initials and award text per artist id, to apply as artist overrides. */
-  artistDetails: Record<string, { societyInitials: string; awardText: string }>
-  flags: string[]
-  stats: { artists: number; artworks: number; sculptures: number; youngArtists: number }
-}
+export interface WordWork { title: string; medium?: string; price?: string; dimensions?: string; section: Section; source: string }
+export interface WordArtist { key: string; firstName: string; surname: string; initials: string; awards: string[]; age?: number; works: WordWork[]; sources: string[] }
+export interface WordParseResult { files: string[]; artists: WordArtist[]; flags: string[]; fixes: string[] }
 
 // ---------- XML reading ----------
 
@@ -78,15 +73,16 @@ function readParagraph(xml: string): ParagraphText {
 
 function toLine(segment: string, bold: boolean, italic: boolean): Line {
   const raw = segment.split('\t').map((cell) => cell.replace(/\s+/g, ' ').trim())
-  return { raw, cells: raw.filter(Boolean), bold, italic }
+  return { raw, cellLines: raw.map((cell) => cell ? [cell] : []), cells: raw.filter(Boolean), bold, italic }
 }
 
 function readTable(xml: string): Line[] {
   return (xml.match(/<w:tr[\s>][\s\S]*?<\/w:tr>/g) ?? []).map((row) => {
     const cells = (row.match(/<w:tc[\s>][\s\S]*?<\/w:tc>/g) ?? []).map((cell) => (cell.match(/<w:p[\s>][\s\S]*?<\/w:p>/g) ?? []).map(readParagraph))
-    const raw = cells.map((paragraphs) => paragraphs.flatMap((paragraph) => paragraph.segments).join(' ').replace(/\s+/g, ' ').trim())
+    const cellLines = cells.map((paragraphs) => paragraphs.flatMap((paragraph) => paragraph.segments).map((segment) => segment.replace(/\s+/g, ' ').trim()).filter(Boolean))
+    const raw = cellLines.map((lines) => lines.join(' '))
     const texty = cells.flat().filter((paragraph) => paragraph.segments.join('').trim())
-    return { raw, cells: raw.filter(Boolean), bold: texty.length > 0 && texty.every((paragraph) => paragraph.bold), italic: texty.length > 0 && texty.every((paragraph) => paragraph.italic) }
+    return { raw, cellLines, cells: raw.filter(Boolean), bold: texty.length > 0 && texty.every((paragraph) => paragraph.bold), italic: texty.length > 0 && texty.every((paragraph) => paragraph.italic) }
   })
 }
 
@@ -123,17 +119,24 @@ function readBlocks(documentXml: string): Block[] {
   return blocks
 }
 
-// ---------- Interpretation helpers ----------
+// ---------- Text helpers ----------
+
+/** Accent-, case- and punctuation-insensitive key, e.g. "Fátima DOÑA" → "fatima dona". */
+export function looseKey(value?: string): string {
+  return (value ?? '').normalize('NFKD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l').replace(/Ł/g, 'L')
+    .toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
 
 const KNOWN_INITIALS = new Set([
-  'RMS', 'ARMS', 'PRMS', 'VPRMS', 'HPRMS', 'PPRMS', 'PVPRMS', 'HS', 'HSF', 'SWA', 'PSWA', 'VPSWA', 'PPSWA', 'SBA', 'FSBA', 'SLM', 'SWLA',
-  'RWS', 'ARWS', 'RI', 'RBA', 'ROI', 'AROI', 'RSMA', 'RA', 'ARA', 'NEAC', 'PS', 'PPS', 'MAA', 'MASF', 'MPSGS', 'WFM', 'TWASI', 'MBE', 'OBE',
-  'CBE', 'BEM', 'FRSA', 'FRBS', 'ARBS', 'RBS', 'SGA', 'SGFA', 'SFP', 'UA', 'SAA', 'SPS', 'PSA', 'RSW', 'RSA', 'RE', 'RWA', 'RBSA', 'MFA', 'BA',
+  'RMS', 'ARMS', 'PRMS', 'VPRMS', 'HPRMS', 'PPRMS', 'PVPRMS', 'SRMS', 'HS', 'HSF', 'PHS', 'PPHS', 'SWA', 'SWAC', 'PSWA', 'VPSWA', 'PPSWA', 'HRSWA',
+  'SBA', 'FSBA', 'SBAF', 'SLM', 'SWLA', 'RWS', 'ARWS', 'RI', 'RBA', 'ROI', 'AROI', 'RSMA', 'RA', 'ARA', 'NEAC', 'PS', 'PPS', 'MAA', 'MASF',
+  'MPSGS', 'WFM', 'TWASI', 'MBE', 'OBE', 'CBE', 'BEM', 'FRSA', 'FRBS', 'ARBS', 'RBS', 'SGA', 'SGFA', 'SFP', 'UA', 'SAA', 'SPS', 'PSA', 'RSW',
+  'RSA', 'RE', 'RWA', 'RBSA', 'MFA', 'BA', 'MA', 'DIP', 'FGE', 'CPA', 'GM', 'HONS', 'PPFGSASLM',
 ])
 
 function isInitialsToken(token: string): boolean {
-  const cleaned = token.replace(/[.,]/g, '')
-  return KNOWN_INITIALS.has(cleaned) || /^(H|V|P|PP|A|F|HP|VP|PVP)(RMS|SWA|HS)$/.test(cleaned)
+  const cleaned = token.replace(/[.,()]/g, '').toLocaleUpperCase()
+  return KNOWN_INITIALS.has(cleaned) || /^(H|V|P|PP|A|F|HP|VP|PVP|S)(RMS|SWA|HS)$/.test(cleaned)
 }
 
 function titleCaseName(value: string): string {
@@ -142,16 +145,68 @@ function titleCaseName(value: string): string {
     .replace(/\bMc(\p{L})/gu, (_match, letter: string) => `Mc${letter.toLocaleUpperCase()}`)
 }
 
-function splitHeading(text: string): { name: string; initials: string; warnings: string[] } {
-  const tokens = text.replace(/\s+/g, ' ').trim().split(' ')
-  const initials: string[] = []
-  while (tokens.length > 1 && isInitialsToken(tokens.at(-1)!)) initials.unshift(tokens.pop()!.replace(/[.,]/g, ''))
-  const warnings: string[] = []
-  const mixedCase = /\p{Ll}/u.test(tokens.join(' '))
-  const trailing = tokens.at(-1) ?? ''
-  if (tokens.length > 1 && mixedCase && /^[A-Z]{2,6}$/.test(trailing)) warnings.push(`"${trailing}" may be society initials — check the name and initials`)
-  if (tokens.length >= 3) warnings.push('Name has three or more parts — check which part is the surname (used for A–Z order)')
-  return { name: titleCaseName(tokens.join(' ')), initials: initials.join(' '), warnings }
+/** Brand names that must be capitalised in media (the user confirmed: brands everywhere). */
+const BRANDS: [RegExp, string][] = [
+  [/\bderwent\s*procolou?r\b/gi, 'Derwent Procolour'],
+  [/\bderwent\s*inktense\b/gi, 'Derwent Inktense'],
+  [/\bderwent\b/gi, 'Derwent'],
+  [/\bpolymin\b/gi, 'Polymin'],
+  [/\bpolydraw\b/gi, 'Polydraw'],
+  [/\bgrafix\b/gi, 'Grafix'],
+  [/\bdura-?lar\b/gi, 'Dura-Lar'],
+  [/\bflexi-?hex\b/gi, 'Flexi-hex'],
+  [/\byupo\b/gi, 'Yupo'],
+  [/\bpolychromos\b/gi, 'Polychromos'],
+  [/\bprismacolou?r\b/gi, 'Prismacolor'],
+  [/\bclaybord\b/gi, 'Claybord'],
+  [/\bgessobord\b/gi, 'Gessobord'],
+]
+
+/** Fixes spacing slips (joined words, "x(", "&y") and brand capitals. Every change is reported. */
+function cleanText(value: string, label: string, fixes: string[], options: { brands?: boolean } = {}): string {
+  let text = value.replace(/\s+/g, ' ').trim()
+  const before = text
+  text = text.replace(/([^\s(])\(/g, '$1 (').replace(/(\S)&/g, '$1 &').replace(/&(\S)/g, '& $1')
+  // A lower-case letter running straight into a capital ("IslandColoured", "ain’tGonna"), except Mc/Mac names.
+  text = text.replace(/\p{L}+/gu, (word) => (/^(Mc|Mac)\p{Lu}/u.test(word) ? word : word.replace(/(\p{Ll})(\p{Lu})/gu, '$1 $2')))
+  if (options.brands) for (const [pattern, brand] of BRANDS) text = text.replace(pattern, brand)
+  if (text !== before) fixes.push(`${label}: "${before}" → "${text}"`)
+  return text
+}
+
+const TRAILING_PRICE = /\s*(NFS\s*\(\s*£?\s?\d[\d,]*(?:\.\d{2})?\s*\)|NFS|SOLD|POA|P\.O\.A\.?|£\s?\d[\d,]*(?:\.\d{2})?)$/i
+const TRAILING_NUMBER_AFTER_BRACKET = /\)\s*(\d[\d,]*(?:\.\d{2})?)$/
+
+function cleanPrice(value?: string): string | undefined {
+  const trimmed = value?.trim().replace(/^£\s*/, '').replace(/\s+/g, ' ')
+  if (!trimmed) return undefined
+  const nfs = trimmed.match(/^nfs(?:\s*\(\s*£?\s*([\d,.]+)\s*\))?$/i)
+  if (nfs) return nfs[1] ? `NFS (${nfs[1]})` : 'NFS'
+  return /^(sold|poa|p\.o\.a\.?)$/i.test(trimmed) ? trimmed.toLocaleUpperCase() : trimmed
+}
+
+/** "Title (medium) price" → parts. The medium is the last bracketed group before the price. */
+function parseWorkLine(line: string): { title: string; medium?: string; price?: string; trailing?: string } {
+  let rest = line.trim()
+  let price: string | undefined
+  const trailing = rest.match(TRAILING_PRICE)
+  if (trailing) { price = trailing[1]; rest = rest.slice(0, trailing.index).trim() }
+  else {
+    const afterBracket = rest.match(TRAILING_NUMBER_AFTER_BRACKET)
+    if (afterBracket) { price = afterBracket[1]; rest = rest.slice(0, rest.length - afterBracket[0].length + 1).trim() }
+  }
+  const close = rest.lastIndexOf(')')
+  if (close < 0) return { title: rest, price }
+  let depth = 0
+  for (let index = close; index >= 0; index -= 1) {
+    if (rest[index] === ')') depth += 1
+    if (rest[index] === '(') depth -= 1
+    if (depth === 0) {
+      const after = rest.slice(close + 1).trim()
+      return { title: rest.slice(0, index).trim(), medium: rest.slice(index + 1, close).trim() || undefined, price, trailing: after || undefined }
+    }
+  }
+  return { title: rest, price }
 }
 
 function sectionFromText(text: string): Section | undefined {
@@ -161,147 +216,88 @@ function sectionFromText(text: string): Section | undefined {
   return undefined
 }
 
-const SECTION_HEADING = /^(list of exhibits\b.*|(miniature )?paintings?|sculptures?|young (artists?|miniaturists?))(\s*\(continued\))?$/i
-const PRICE = /^(£\s?\d[\d,]*(\.\d{2})?|\d[\d,]*(\.\d{2})?|NFS(\s*\(\s*£?\s?\d[\d,]*(\.\d{2})?\s*\))?|SOLD|POA|P\.O\.A\.?)$/i
-const TRAILING_SAFE_PRICE = /\s+(£\s?\d[\d,]*(?:\.\d{2})?|NFS(?:\s*\(\s*£?\s?\d[\d,]*(?:\.\d{2})?\s*\))?|SOLD|POA|P\.O\.A\.?)$/i
-const TRAILING_NUMBER_AFTER_BRACKET = /\)\s+(\d[\d,]*(?:\.\d{2})?)$/
-const AWARD = /(memorial bowl|memorial exhibit|award|prize|medal|trophy|\bbowl\s+\d{4})/i
-
-function cleanPrice(value?: string): string | undefined {
-  const trimmed = value?.trim().replace(/^£\s*/, '')
-  return trimmed ? trimmed.toLocaleUpperCase().startsWith('NFS') || /^(sold|poa|p\.o\.a\.?)$/i.test(trimmed) ? trimmed.toLocaleUpperCase() : trimmed : undefined
-}
-
-/** Splits "Title (medium) [trailing text]" on the last bracketed group. */
-function splitDescription(description: string): { title: string; medium?: string; trailing?: string } {
-  const close = description.lastIndexOf(')')
-  if (close < 0) return { title: description.trim() }
-  let depth = 0
-  for (let index = close; index >= 0; index -= 1) {
-    if (description[index] === ')') depth += 1
-    if (description[index] === '(') depth -= 1
-    if (depth === 0) {
-      const trailing = description.slice(close + 1).trim()
-      return { title: description.slice(0, index).trim(), medium: description.slice(index + 1, close).trim() || undefined, trailing: trailing || undefined }
-    }
-  }
-  return { title: description.trim() }
-}
-
 // ---------- Builder ----------
 
-interface DraftArtwork { number?: string; description: string; price?: string; section: Section; warnings: DataWarning[]; title: string; medium?: string }
-interface DraftArtist { key: string; heading: string; name: string; initials: string; awards: string[]; artworks: DraftArtwork[]; warnings: string[] }
-
-class ImportBuilder {
-  artists = new Map<string, DraftArtist>()
+class Builder {
+  artists = new Map<string, WordArtist>()
   flags: string[] = []
-  current?: DraftArtist
-  section: Section = 'painting'
-  strayNumbers = 0
+  fixes: string[] = []
 
-  artist(heading: string, nameOverride?: { name: string; initials: string }): DraftArtist {
-    const parsed = nameOverride ? { ...nameOverride, warnings: [] as string[] } : splitHeading(heading)
-    const key = normalizeIdentity(parsed.name)
+  artist(firstName: string, surname: string, initials: string, source: string): WordArtist {
+    const key = looseKey(`${firstName} ${surname}`)
     let artist = this.artists.get(key)
     if (!artist) {
-      artist = { key, heading, name: parsed.name, initials: parsed.initials, awards: [], artworks: [], warnings: parsed.warnings }
+      artist = { key, firstName, surname, initials, awards: [], works: [], sources: [source] }
       this.artists.set(key, artist)
-    } else if (parsed.initials && artist.initials && parsed.initials !== artist.initials) {
-      this.flags.push(`${parsed.name}: listed with different initials ("${artist.initials}" and "${parsed.initials}") — kept "${artist.initials}"`)
-    } else if (parsed.initials && !artist.initials) artist.initials = parsed.initials
-    this.current = artist
+    } else {
+      if (!artist.sources.includes(source)) artist.sources.push(source)
+      if (initials && artist.initials && initials !== artist.initials) this.flags.push(`${firstName} ${surname}: different initials in ${artist.sources.join(' and ')} ("${artist.initials}" / "${initials}") — kept "${artist.initials}"`)
+      else if (initials && !artist.initials) artist.initials = initials
+    }
     return artist
   }
 
-  artwork(artist: DraftArtist, number: string | undefined, description: string, price: string | undefined, section: Section) {
-    const draft: DraftArtwork = { number, description, price: cleanPrice(price), section, warnings: [], title: '' }
-    this.describe(draft)
-    artist.artworks.push(draft)
+  award(artist: WordArtist, text: string) {
+    const award = text.trim().toLocaleUpperCase()
+    if (award && !artist.awards.includes(award)) artist.awards.push(award)
   }
 
-  describe(draft: DraftArtwork) {
-    const { title, medium, trailing } = splitDescription(draft.description)
-    draft.title = title
-    draft.medium = medium
-    draft.warnings = []
-    const label = draft.number ? `Exhibit ${draft.number}` : `"${title}"`
-    if (!medium) draft.warnings.push({ code: 'word-no-medium', message: 'No medium in brackets — check the title and medium' })
-    if (trailing) draft.warnings.push({ code: 'word-trailing-text', message: `Text after the medium was not imported: "${trailing}"` })
-    if (!draft.price) draft.warnings.push({ code: 'word-no-price', message: 'No price found' })
-    if (!title) draft.warnings.push({ code: 'word-no-title', message: 'No title found' })
-    draft.warnings.forEach((warning) => this.flags.push(`${label}: ${warning.message}`))
-  }
-}
-
-function parseList(lines: Line[], builder: ImportBuilder) {
-  let lastArtwork: DraftArtwork | undefined
-  let worksSinceHeading = 0
-  for (const line of lines) {
-    const text = line.cells.join(' ').trim()
-    if (!text || text === '£') continue
-    if (SECTION_HEADING.test(text)) {
-      const section = sectionFromText(text)
-      if (section) builder.section = section
-      else builder.flags.push(`Heading not linked to a section: "${text}"`)
-      builder.current = undefined
-      lastArtwork = undefined
-      continue
-    }
-    if (/^\d{1,4}$/.test(text)) { builder.strayNumbers += 1; continue }
-
-    let number: string | undefined
-    let rest: string[] | undefined
-    if (/^\d{1,4}[.)]?$/.test(line.cells[0]) && line.cells.length >= 2) { number = line.cells[0].replace(/[.)]/g, ''); rest = line.cells.slice(1) }
-    else {
-      const match = text.match(/^(\d{1,4})[.)]?\s+(.+)$/)
-      if (match) { number = match[1]; rest = [match[2]] }
-    }
-    if (number && rest) {
-      let price: string | undefined
-      let description: string
-      if (rest.length >= 2 && PRICE.test(rest.at(-1)!)) { price = rest.at(-1); description = rest.slice(0, -1).join(' ') }
-      else {
-        description = rest.join(' ')
-        const safe = description.match(TRAILING_SAFE_PRICE) ?? description.match(TRAILING_NUMBER_AFTER_BRACKET)
-        if (safe) { price = safe[1]; description = description.slice(0, description.length - safe[0].length + (safe[0].startsWith(')') ? 1 : 0)).trim() }
-      }
-      if (!builder.current) { builder.flags.push(`Exhibit ${number} appears before any artist name — not imported: "${text}"`); continue }
-      builder.artwork(builder.current, number, description, price, builder.section)
-      worksSinceHeading += 1
-      lastArtwork = builder.current.artworks.at(-1)
-      continue
-    }
-    if (lastArtwork && !lastArtwork.medium && text.startsWith('(')) {
-      // A description that wrapped onto a second line, e.g. "(watercolour on vellum)   2000".
-      builder.flags.splice(builder.flags.length - lastArtwork.warnings.length, lastArtwork.warnings.length)
-      let continuation = line.cells.join(' ')
-      if (!lastArtwork.price && line.cells.length >= 2 && PRICE.test(line.cells.at(-1)!)) { lastArtwork.price = cleanPrice(line.cells.at(-1)); continuation = line.cells.slice(0, -1).join(' ') }
-      else if (!lastArtwork.price) {
-        const safe = continuation.match(TRAILING_SAFE_PRICE) ?? continuation.match(TRAILING_NUMBER_AFTER_BRACKET)
-        if (safe) { lastArtwork.price = cleanPrice(safe[1]); continuation = continuation.slice(0, continuation.length - safe[0].length + (safe[0].startsWith(')') ? 1 : 0)).trim() }
-      }
-      lastArtwork.description = `${lastArtwork.description} ${continuation}`
-      builder.describe(lastArtwork)
-      continue
-    }
-    if (builder.current && worksSinceHeading === 0 && (line.italic || AWARD.test(text))) {
-      // An artist listed in two sections repeats their award line — keep it once.
-      if (!builder.current.awards.includes(text.toLocaleUpperCase())) builder.current.awards.push(text.toLocaleUpperCase())
-      continue
-    }
-    const capitals = text === text.toLocaleUpperCase() && /\p{Lu}/u.test(text)
-    if (line.bold || capitals) {
-      builder.artist(text)
-      worksSinceHeading = 0
-      lastArtwork = undefined
-      continue
-    }
-    builder.flags.push(`Line not understood, not imported: "${text}"`)
+  work(artist: WordArtist, line: string, section: Section, source: string) {
+    const name = `${artist.firstName} ${artist.surname}`
+    const fixed = cleanText(line, name, this.fixes)
+    const parts = parseWorkLine(fixed)
+    const title = parts.title
+    const medium = parts.medium ? cleanText(parts.medium, `${name} — medium`, this.fixes, { brands: true }) : undefined
+    const label = `${name} — "${title || line}"`
+    if (!title) this.flags.push(`${label}: no title found`)
+    if (!medium) this.flags.push(`${label}: no medium in brackets`)
+    if (!parts.price) this.flags.push(`${label}: no price`)
+    if (parts.trailing) this.flags.push(`${label}: text after the medium not imported — "${parts.trailing}"`)
+    artist.works.push({ title, medium, price: cleanPrice(parts.price), section, source })
   }
 }
 
-type Field = 'number' | 'firstName' | 'surname' | 'name' | 'initials' | 'award' | 'section' | 'title' | 'medium' | 'price' | 'young'
+/** Claire's layout: [Age] | FIRST | SURNAME INITIALS (+award lines) | works (one per line). */
+function parseRowTable(rows: Line[], builder: Builder, section: Section, source: string): boolean {
+  const usable = rows.filter((row) => row.cellLines.some((lines) => lines.length))
+  const looksRight = usable.filter((row) => {
+    const filled = row.cellLines
+    const n = filled.length
+    return (n === 3 || n === 4) && filled[n - 1].some((line) => /\(.+\)/.test(line))
+  })
+  if (!looksRight.length || looksRight.length < usable.length * 0.6) return false
+  for (const row of usable) {
+    const cells = row.cellLines
+    if (cells.every((lines) => !lines.length || /^age$/i.test(lines.join(' ')))) continue
+    let offset = 0
+    let age: number | undefined
+    if (cells.length === 4) {
+      const ageText = cells[0].join(' ')
+      if (/^\d{1,2}$/.test(ageText)) age = Number(ageText)
+      else if (ageText) builder.flags.push(`${source}: age "${ageText}" not understood`)
+      offset = 1
+    }
+    const first = cells[offset].join(' ').trim()
+    const surnameLines = cells[offset + 1]
+    const workLines = cells[offset + 2]
+    if (!surnameLines.length) { builder.flags.push(`${source}: row "${row.raw.join(' | ')}" has no surname — not imported`); continue }
+    const [heading, ...awardLines] = surnameLines
+    const tokens = heading.split(' ')
+    const surname = tokens[0]
+    const initials = tokens.slice(1).join(' ')
+    const unknown = tokens.slice(1).filter((token) => !isInitialsToken(token))
+    const name = `${titleCaseName(first)} ${titleCaseName(surname)}`
+    if (unknown.length) builder.flags.push(`${name}: check initials "${unknown.join(' ')}" (not a known society abbreviation)`)
+    const artist = builder.artist(titleCaseName(first), titleCaseName(surname), initials, source)
+    if (age !== undefined) artist.age = age
+    awardLines.forEach((line) => builder.award(artist, line))
+    if (!workLines.length) builder.flags.push(`${name}: no artworks in ${source}`)
+    workLines.forEach((line) => builder.work(artist, line, section, source))
+  }
+  return true
+}
+
+type Field = 'number' | 'firstName' | 'surname' | 'name' | 'initials' | 'award' | 'section' | 'title' | 'medium' | 'price' | 'young' | 'dimensions' | 'age'
 const HEADERS: [Field, RegExp][] = [
   ['number', /^(no\.?|number|cat(alogue)?\.? ?(no\.?|number)|exhibit( no\.?| number)?|#)$/],
   ['firstName', /^(first ?names?|forenames?|given names?)$/],
@@ -312,8 +308,10 @@ const HEADERS: [Field, RegExp][] = [
   ['section', /^(section|category|type|class|division)$/],
   ['title', /^((artwork|work) )?title( of (work|artwork))?$|^(artwork|work)$/],
   ['medium', /(medium|media|materials?|technique)/],
+  ['dimensions', /(dimension|size)/],
   ['price', /(price|£|value|cost)/],
   ['young', /young/],
+  ['age', /^age$/],
 ]
 
 function headerMap(row: Line): Partial<Record<Field, number>> | undefined {
@@ -326,100 +324,120 @@ function headerMap(row: Line): Partial<Record<Field, number>> | undefined {
   return map.title !== undefined && (map.name !== undefined || map.surname !== undefined) ? map : undefined
 }
 
-function parseTable(rows: Line[], map: Partial<Record<Field, number>>, builder: ImportBuilder) {
+function parseHeaderTable(rows: Line[], map: Partial<Record<Field, number>>, builder: Builder, defaultSection: Section, source: string) {
   const value = (row: Line, field: Field) => (map[field] === undefined ? '' : row.raw[map[field]!] ?? '').trim()
-  let artist: DraftArtist | undefined
+  let artist: WordArtist | undefined
   rows.forEach((row, index) => {
     if (!row.cells.length) return
     const fullName = value(row, 'name') || [value(row, 'firstName'), value(row, 'surname')].filter(Boolean).join(' ')
     const title = value(row, 'title')
     if (fullName) {
-      const heading = splitHeading(fullName)
-      const initials = [heading.initials, value(row, 'initials').toLocaleUpperCase()].filter(Boolean).join(' ')
-      artist = builder.artist(fullName, { name: heading.name, initials })
-      artist.warnings.push(...heading.warnings.filter((warning) => !artist!.warnings.includes(warning)))
-      const award = value(row, 'award')
-      if (award && !artist.awards.includes(award.toLocaleUpperCase())) artist.awards.push(award.toLocaleUpperCase())
+      const tokens = fullName.split(/\s+/)
+      const initials: string[] = []
+      while (tokens.length > 1 && isInitialsToken(tokens.at(-1)!)) initials.unshift(tokens.pop()!)
+      const split = splitName(titleCaseName(tokens.join(' ')))
+      const first = value(row, 'firstName') ? titleCaseName(value(row, 'firstName')) : split.firstName
+      const surname = value(row, 'surname') ? titleCaseName(value(row, 'surname').split(/\s+/).filter((token) => !isInitialsToken(token)).join(' ')) : split.surname
+      artist = builder.artist(first, surname, [initials.join(' '), value(row, 'initials')].filter(Boolean).join(' '), source)
+      if (/^\d{1,2}$/.test(value(row, 'age'))) artist.age = Number(value(row, 'age'))
+      if (value(row, 'award')) builder.award(artist, value(row, 'award'))
     }
-    if (!title) { if (!fullName) builder.flags.push(`Table row ${index + 2}: no artist or title — not imported`); return }
-    if (!artist) { builder.flags.push(`Table row ${index + 2}: "${title}" has no artist — not imported`); return }
+    if (!title) { if (!fullName) builder.flags.push(`${source} row ${index + 2}: no artist or title — not imported`); return }
+    if (!artist) { builder.flags.push(`${source} row ${index + 2}: "${title}" has no artist — not imported`); return }
     const sectionText = value(row, 'section')
-    let section: Section = sectionText ? sectionFromText(sectionText) ?? 'painting' : 'painting'
-    if (sectionText && !sectionFromText(sectionText)) builder.flags.push(`Table row ${index + 2}: section "${sectionText}" not recognised — listed as a miniature painting`)
+    let section = sectionText ? sectionFromText(sectionText) ?? defaultSection : defaultSection
+    if (sectionText && !sectionFromText(sectionText)) builder.flags.push(`${source} row ${index + 2}: section "${sectionText}" not recognised — used ${defaultSection}`)
     if (/^(y|yes|true|x|✓|✔)$/i.test(value(row, 'young'))) section = 'young'
     const medium = value(row, 'medium')
-    builder.artwork(artist, value(row, 'number') || undefined, medium ? `${title} (${medium})` : title, value(row, 'price') || undefined, section)
+    const price = value(row, 'price')
+    builder.work(artist, `${title}${medium ? ` (${medium})` : ''}${price ? ` ${price}` : ''}`, section, source)
+    const work = artist.works.at(-1)!
+    if (value(row, 'dimensions')) work.dimensions = value(row, 'dimensions')
   })
 }
 
-export async function parseWordDocument(data: ArrayBuffer, fileName = 'Word document', syncedAt = new Date().toISOString()): Promise<WordImportResult> {
-  let zip: JSZip
-  try { zip = await JSZip.loadAsync(data) }
-  catch { throw new Error('This is not a .docx file. If it is an older .doc, open it in Word and use File › Save As › Word Document (.docx).') }
-  const documentXml = await zip.file('word/document.xml')?.async('string')
-  if (!documentXml) throw new Error('The Word document has no readable body.')
+const SECTION_HEADING = /^(list of exhibits\b.*|(miniature )?paintings?|sculptures?|young (artists?|miniaturists?))(\s*\(continued\))?$/i
+const AWARD = /(memorial bowl|memorial exhibit|award|prize|medal|trophy|\bbowl\s+\d{4})/i
 
-  const builder = new ImportBuilder()
-  let pending: Line[] = []
-  const flush = () => { if (pending.length) parseList(pending, builder); pending = [] }
-  for (const block of readBlocks(documentXml)) {
-    if (block.kind === 'line') { pending.push(block.line); continue }
-    const map = block.rows[0] ? headerMap(block.rows[0]) : undefined
-    if (map) { flush(); parseTable(block.rows.slice(1), map, builder) }
-    else pending.push(...block.rows)
-  }
-  flush()
-
-  const artists: ArtistSubmission[] = []
-  const artistDetails: WordImportResult['artistDetails'] = {}
-  let order = 0
-  for (const draft of builder.artists.values()) {
-    if (!draft.artworks.length) {
-      builder.flags.push(`"${draft.heading}" was read as an artist name but has no artworks — ignored`)
+/** Printed-catalogue style list (paragraphs or untyped table rows). */
+function parseList(lines: Line[], builder: Builder, startSection: Section, source: string) {
+  let section = startSection
+  let current: WordArtist | undefined
+  let worksSinceHeading = 0
+  let strayNumbers = 0
+  for (const line of lines) {
+    const text = line.cells.join(' ').trim()
+    if (!text || text === '£') continue
+    if (SECTION_HEADING.test(text)) {
+      const found = sectionFromText(text)
+      if (found) section = found
+      else builder.flags.push(`${source}: heading not linked to a section — "${text}"`)
+      current = undefined
       continue
     }
-    const sections = new Set(draft.artworks.map((artwork) => artwork.section))
-    if (sections.has('young') && sections.size > 1) builder.flags.push(`${draft.name}: listed under Young Artists and another section — all their works will go under Young Artists`)
-    const artistId = `word-${stableHash(draft.key)}`
-    const name = splitName(draft.name)
-    draft.warnings.forEach((warning) => builder.flags.push(`${draft.name}: ${warning}`))
-    const artworks: ArtworkSubmission[] = draft.artworks.map((artwork, index) => ({
-      id: `${artistId}-${stableHash(`${index + 1}|${normalizeIdentity(artwork.title)}`)}`,
-      artistId,
-      position: index + 1,
-      title: artwork.title,
-      medium: artwork.medium,
-      price: artwork.price,
-      sculpture: artwork.section === 'sculpture' ? true : undefined,
-      votes: { yes: 0, maybe: 0, no: 0, valid: false, raw: '' },
-      verdict: 'tie',
-      warnings: artwork.warnings,
-    }))
-    artists.push({
-      id: artistId,
-      sourceRow: (order += 1),
-      fullName: draft.name,
-      firstName: name.firstName,
-      surname: name.surname,
-      youngArtist: sections.has('young') || undefined,
-      artworks,
-      warnings: draft.warnings.map((message) => ({ code: 'word-name-review', message })),
-    })
-    artistDetails[artistId] = { societyInitials: draft.initials, awardText: draft.awards.join(' | ') }
+    if (/^\d{1,4}$/.test(text)) { strayNumbers += 1; continue }
+    const numbered = /^\d{1,4}[.)]?$/.test(line.cells[0]) && line.cells.length >= 2 ? line.cells.slice(1).join(' ') : text.match(/^\d{1,4}[.)]?\s+(.+)$/)?.[1]
+    if (numbered) {
+      if (!current) { builder.flags.push(`${source}: "${text}" appears before any artist name — not imported`); continue }
+      builder.work(current, numbered, section, source)
+      worksSinceHeading += 1
+      continue
+    }
+    if (current && worksSinceHeading === 0 && (line.italic || AWARD.test(text))) { builder.award(current, text); continue }
+    if (line.bold || (text === text.toLocaleUpperCase() && /\p{Lu}/u.test(text))) {
+      const tokens = text.split(/\s+/)
+      const initials: string[] = []
+      while (tokens.length > 1 && isInitialsToken(tokens.at(-1)!)) initials.unshift(tokens.pop()!)
+      const split = splitName(titleCaseName(tokens.join(' ')))
+      current = builder.artist(split.firstName, split.surname, initials.join(' '), source)
+      if (tokens.length >= 3) builder.flags.push(`${split.firstName} ${split.surname}: name has three or more parts — check the surname (used for A–Z order)`)
+      worksSinceHeading = 0
+      continue
+    }
+    builder.flags.push(`${source}: line not understood, not imported — "${text}"`)
   }
-  if (builder.strayNumbers) builder.flags.push(`Ignored ${builder.strayNumbers} line${builder.strayNumbers === 1 ? '' : 's'} containing only a number (probably page numbers)`)
-  if (!artists.length) throw new Error('No artists or artworks could be read from this Word document. Send it to Claude to check the layout.')
+  if (strayNumbers) builder.flags.push(`${source}: ignored ${strayNumbers} line${strayNumbers === 1 ? '' : 's'} containing only a number (probably page numbers)`)
+}
 
-  const allArtworks = artists.flatMap((artist) => artist.artworks)
-  return {
-    snapshot: { id: 'latest', syncedAt, sourceLabel: fileName, artists },
-    artistDetails,
-    flags: builder.flags,
-    stats: {
-      artists: artists.length,
-      artworks: allArtworks.length,
-      sculptures: allArtworks.filter((artwork) => artwork.sculpture).length,
-      youngArtists: artists.filter((artist) => artist.youngArtist).length,
-    },
+async function readDocument(data: ArrayBuffer, fileName: string): Promise<Block[]> {
+  let zip: JSZip
+  try { zip = await JSZip.loadAsync(data) }
+  catch { throw new Error(`${fileName} is not a .docx file. If it is an older .doc, open it in Word and use File › Save As › Word Document (.docx).`) }
+  const documentXml = await zip.file('word/document.xml')?.async('string')
+  if (!documentXml) throw new Error(`${fileName} has no readable body.`)
+  return readBlocks(documentXml)
+}
+
+/** Reads one or more Word files into a single list of artists (an artist in several files is merged). */
+export async function parseWordDocuments(files: { name: string; data: ArrayBuffer }[]): Promise<WordParseResult> {
+  const builder = new Builder()
+  for (const file of files) {
+    const section = sectionFromText(file.name) ?? 'painting'
+    const blocks = await readDocument(file.data, file.name)
+    let pending: Line[] = []
+    const flush = () => { if (pending.length) parseList(pending, builder, section, file.name); pending = [] }
+    for (const block of blocks) {
+      if (block.kind === 'line') { pending.push(block.line); continue }
+      const map = block.rows[0] ? headerMap(block.rows[0]) : undefined
+      if (map) { flush(); parseHeaderTable(block.rows.slice(1), map, builder, section, file.name); continue }
+      if (parseRowTable(block.rows, builder, section, file.name)) { flush(); continue }
+      pending.push(...block.rows)
+    }
+    flush()
   }
+  const artists = [...builder.artists.values()].filter((artist) => {
+    if (artist.works.length) return true
+    builder.flags.push(`"${artist.firstName} ${artist.surname}" has no artworks — ignored`)
+    return false
+  })
+  for (const artist of artists) {
+    const sections = new Set(artist.works.map((work) => work.section))
+    if (sections.has('young') && sections.size > 1) builder.flags.push(`${artist.firstName} ${artist.surname}: listed under Young Artists and another section — all their works will go under Young Artists`)
+  }
+  if (!artists.length) throw new Error('No artists or artworks could be read from the Word document(s).')
+  return { files: files.map((file) => file.name), artists, flags: builder.flags, fixes: builder.fixes }
+}
+
+export async function parseWordDocument(data: ArrayBuffer, fileName = 'Word document'): Promise<WordParseResult> {
+  return parseWordDocuments([{ name: fileName, data }])
 }

@@ -39,7 +39,7 @@ describe('printed catalogue Word export', () => {
   it('formats entries and strips the currency symbol from prices', () => {
     const [entry] = catalogueEntries([smith], decisions, overrides)
     expect(entry).toMatchObject({ heading: 'JANE SMITH RMS', awardText: 'GOLD MEMORIAL BOWL 2026' })
-    expect(entry.artworks[0]).toEqual({ number: '001', description: 'Red Fox (watercolour on paper)', price: '275' })
+    expect(entry.artworks[0]).toMatchObject({ number: '001', description: 'Red Fox (watercolour on paper)', price: '275' })
   })
 
   it('lists a young sculptor under Young Artists and omits empty sections and excluded works', () => {

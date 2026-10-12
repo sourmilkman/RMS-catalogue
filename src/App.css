@@ -38,7 +38,15 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .section-note { margin: 4px 0 0; color: #d7c783; font-size: .68rem; }
 .vote.verdict-none { color: #aab3b1; background: #41494c; }
 .import-panel .word-import { color: #f1ead0; border-color: #8d7d45; background: #4a4534; }
-.word-flags { display: block; }
-.word-flags summary { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 700; }
-.word-flags ul { margin: 10px 0 8px; padding-left: 22px; max-height: 260px; overflow: auto; font-size: .78rem; line-height: 1.5; }
-.word-flags button { padding: 5px 10px; color: inherit; border: 1px solid currentColor; border-radius: 7px; background: transparent; font-size: .74rem; }
+.word-review { margin: 0 0 16px; padding: 14px 16px; color: #e9e2c4; border: 1px solid #8d7d45; border-radius: 14px; background: #3d3a2e; }
+.word-review header { display: flex; align-items: center; gap: 9px; }
+.word-review header h2 { flex: 1; margin: 0; font-size: 1rem; }
+.word-review header button, .not-listed button { padding: 6px 11px; color: inherit; border: 1px solid #8d7d45; border-radius: 8px; background: transparent; font-size: .76rem; }
+.word-review > p { margin: 6px 0 10px; color: #cfc7a5; font-size: .8rem; }
+.review-group { margin-top: 6px; padding: 8px 10px; border-radius: 9px; background: #34322a; font-size: .8rem; }
+.review-group summary { cursor: pointer; font-weight: 700; }
+.review-group summary b { margin-left: 6px; padding: 1px 7px; border-radius: 99px; background: #5a5139; font-size: .7rem; }
+.review-group p { margin: 6px 0 0; color: #b9b291; }
+.review-group ul { max-height: 240px; margin: 8px 0 2px; padding-left: 20px; overflow: auto; line-height: 1.55; }
+.not-listed { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.not-listed details { flex: 1; min-width: 220px; }

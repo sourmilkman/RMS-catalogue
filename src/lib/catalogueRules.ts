@@ -1,9 +1,13 @@
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision, ArtworkSubmission } from '../types'
 
-/** A Sheet-supplied age always counts; otherwise the on-screen toggle (or the imported value before any edit) decides. */
+/**
+ * The on-screen toggle decides once used; otherwise the Word lists decide (an artist the secretary placed in the
+ * Miniature list is not a Young Artist even if their submission gave an age); otherwise a Sheet-supplied age counts.
+ */
 export function isYoungArtist(artist: ArtistSubmission, override?: ArtistOverride): boolean {
-  if (artist.youngArtistAge !== undefined) return true
-  return override ? override.youngArtist : artist.youngArtist ?? false
+  if (override?.youngArtistSet) return override.youngArtist
+  if (artist.youngArtist !== undefined) return artist.youngArtist
+  return artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
 }
 
 /** The per-artwork toggle wins; otherwise the value from a Word import; otherwise a miniature painting. */
