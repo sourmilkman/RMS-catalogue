@@ -23,7 +23,7 @@ describe('website sheet', () => {
       ['001', 'Sculpture', 'Jenny', 'Musker', 'VPRMS', 'GOLD MEMORIAL BOWL 2020 / MEMORIAL EXHIBIT', 'Bronze Wren', 'bronze', '', '600', 'https://img/m1', ''],
       ['002', 'Miniature Painting', 'Dorothy J', 'Abrehart', '', '', 'A Fine Catch', 'watercolour on ivorine', '', '200', 'https://img/a0', ''],
       ['003', 'Miniature Painting', 'Jenny', 'Musker', 'VPRMS', 'GOLD MEMORIAL BOWL 2020 / MEMORIAL EXHIBIT', 'Wren', 'watercolour on Polymin', '', '395', 'https://img/m0', ''],
-      ['004', 'Young Artist', 'Jack', 'Savage', '', '', 'Kitchen', 'oil on board', '', '500', 'https://img/y0', ''],
+      ['004', 'Young Artist (18–30)', 'Jack', 'Savage', '', '', 'Kitchen', 'oil on board', '', '500', 'https://img/y0', ''],
     ])
     expect(rows.map((row) => row.catalogueNumber)).toEqual(catalogueEntries(artists, decisions, overrides).flatMap((entry) => entry.artworks.map((item) => item.number)))
   })

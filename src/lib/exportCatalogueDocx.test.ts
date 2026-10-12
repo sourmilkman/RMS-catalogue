@@ -29,7 +29,7 @@ const overrides = {
 describe('printed catalogue Word export', () => {
   it('orders sections Sculptures, Miniature Paintings, Young Artists, each A–Z by surname, numbered continuously', () => {
     const sections = catalogueSections(all, decisions, overrides)
-    expect(sections.map((section) => section.key)).toEqual(['sculptures', 'paintings', 'young'])
+    expect(sections.map((section) => section.key)).toEqual(['sculptures', 'paintings', 'young-14-17'])
     expect(sections[0].entries.map((entry) => entry.heading)).toEqual(['AL MCCANN', 'ZOE MUNDY'])
     expect(sections[1].entries.map((entry) => entry.heading)).toEqual(['TOM ABBOT', 'JANE SMITH RMS'])
     expect(sections[2].entries.map((entry) => entry.heading)).toEqual(['AMY BAKER'])
@@ -45,7 +45,7 @@ describe('printed catalogue Word export', () => {
   it('lists a young sculptor under Young Artists and omits empty sections and excluded works', () => {
     const youngSculptor = { d: override('d', { youngArtist: true }, sculptor) }
     const sections = catalogueSections([sculptor, smith], { 'd-0': { ...included, sculpture: true }, 'a-0': excluded }, youngSculptor)
-    expect(sections.map((section) => section.key)).toEqual(['young'])
+    expect(sections.map((section) => section.key)).toEqual(['young-no-age'])
   })
 
   it('splits one artist across Sculptures and Miniature Paintings by artwork', () => {
@@ -72,11 +72,21 @@ describe('printed catalogue Word export', () => {
     expect(xml).toContain('>MEMORIAL EXHIBIT<')
   })
 
+  it('splits Young Artists into 14–17 then 18–30, numbering straight through', () => {
+    const older = makeArtist('o', 'Ann', 'Adams', ['Moth'], { youngArtistAge: 25 })
+    const younger = makeArtist('p', 'Zak', 'Zane', ['Owl'], { youngArtistAge: 15 })
+    const sections = catalogueSections([older, younger], { 'o-0': included, 'p-0': included }, {})
+    expect(sections.map((section) => [section.title, section.entries.map((entry) => `${entry.artworks[0].number} ${entry.heading}`)])).toEqual([
+      ['LIST OF EXHIBITS – YOUNG ARTISTS (14–17)', ['001 ZAK ZANE']],
+      ['LIST OF EXHIBITS – YOUNG ARTISTS (18–30)', ['002 ANN ADAMS']],
+    ])
+  })
+
   it('creates a portrait A5 Word document with section headings', async () => {
     const blob = await createPrintedCatalogueDocx(all, decisions, overrides, 1)
     const zip = await JSZip.loadAsync(await blob.arrayBuffer())
     const xml = await zip.file('word/document.xml')!.async('string')
-    const order = ['SCULPTURES', 'MINIATURE PAINTINGS', 'YOUNG ARTISTS'].map((title) => xml.indexOf(`LIST OF EXHIBITS – ${title}`))
+    const order = ['SCULPTURES', 'MINIATURE PAINTINGS', 'YOUNG ARTISTS (14–17)'].map((title) => xml.indexOf(`LIST OF EXHIBITS – ${title}`))
     expect(order.every((position) => position >= 0)).toBe(true)
     expect([...order].sort((a, b) => a - b)).toEqual(order)
     expect(xml).toContain('£')

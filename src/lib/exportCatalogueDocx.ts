@@ -4,7 +4,7 @@ import {
 } from 'docx'
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision, ArtworkSubmission } from '../types'
 import { capitaliseName } from './names'
-import { isSculpture, isYoungArtist, sectionOf, type CatalogueSectionKey } from './catalogueRules'
+import { catalogueGroupOf, isSculpture, isYoungArtist, type CatalogueGroupKey, type CatalogueSectionKey } from './catalogueRules'
 
 export { isSculpture, isYoungArtist }
 
@@ -29,14 +29,17 @@ function cell(content: Paragraph[], width: number, left = 0): TableCell {
 
 export type { CatalogueSectionKey }
 
-export const CATALOGUE_SECTIONS: { key: CatalogueSectionKey; title: string }[] = [
+/** Printed order: Sculptures, Miniature Paintings, Young Artists (14–17), Young Artists (18–30). */
+export const CATALOGUE_SECTIONS: { key: CatalogueGroupKey; title: string }[] = [
   { key: 'sculptures', title: 'LIST OF EXHIBITS – SCULPTURES' },
   { key: 'paintings', title: 'LIST OF EXHIBITS – MINIATURE PAINTINGS' },
-  { key: 'young', title: 'LIST OF EXHIBITS – YOUNG ARTISTS' },
+  { key: 'young-14-17', title: 'LIST OF EXHIBITS – YOUNG ARTISTS (14–17)' },
+  { key: 'young-18-30', title: 'LIST OF EXHIBITS – YOUNG ARTISTS (18–30)' },
+  { key: 'young-no-age', title: 'LIST OF EXHIBITS – YOUNG ARTISTS (AGE NOT GIVEN)' },
 ]
 
-export function catalogueSectionFor(artist: ArtistSubmission, artwork: ArtworkSubmission, override?: ArtistOverride, decision?: ArtworkDecision): CatalogueSectionKey {
-  return sectionOf(artist, artwork, override, decision)
+export function catalogueSectionFor(artist: ArtistSubmission, artwork: ArtworkSubmission, override?: ArtistOverride, decision?: ArtworkDecision): CatalogueGroupKey {
+  return catalogueGroupOf(artist, artwork, override, decision)
 }
 
 /** Award lines can be separated with "|" (e.g. "GOLD MEMORIAL BOWL 1986 | MEMORIAL EXHIBIT"). */

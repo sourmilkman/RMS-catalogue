@@ -24,7 +24,7 @@ export interface WebsiteRow {
 }
 
 export const WEBSITE_HEADER = ['Cat No', 'Section', 'First Name', 'Surname', 'Society Initials', 'Award', 'Title', 'Medium', 'Dimensions', 'Price (£)', 'Image Link', 'Image File']
-const SECTION_LABEL = { sculptures: 'Sculpture', paintings: 'Miniature Painting', young: 'Young Artist' } as const
+const SECTION_LABEL = { 'sculptures': 'Sculpture', 'paintings': 'Miniature Painting', 'young-14-17': 'Young Artist (14–17)', 'young-18-30': 'Young Artist (18–30)', 'young-no-age': 'Young Artist (age not given)' } as const
 
 export function websiteRows(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>): WebsiteRow[] {
   const byId = new Map(artists.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, { artist, artwork }] as const)))
