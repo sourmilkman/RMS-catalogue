@@ -4,7 +4,7 @@ import {
 } from 'docx'
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision, ArtworkSubmission } from '../types'
 import { capitaliseName } from './names'
-import { isSculpture, isYoungArtist } from './catalogueRules'
+import { isSculpture, isYoungArtist, sectionOf, type CatalogueSectionKey } from './catalogueRules'
 
 export { isSculpture, isYoungArtist }
 
@@ -27,7 +27,7 @@ function cell(content: Paragraph[], width: number, left = 0): TableCell {
   return new TableCell({ width: { size: width, type: WidthType.DXA }, margins: { top: 0, bottom: 0, left, right: 0 }, borders: noBorders, children: content })
 }
 
-export type CatalogueSectionKey = 'sculptures' | 'paintings' | 'young'
+export type { CatalogueSectionKey }
 
 export const CATALOGUE_SECTIONS: { key: CatalogueSectionKey; title: string }[] = [
   { key: 'sculptures', title: 'LIST OF EXHIBITS – SCULPTURES' },
@@ -35,10 +35,8 @@ export const CATALOGUE_SECTIONS: { key: CatalogueSectionKey; title: string }[] =
   { key: 'young', title: 'LIST OF EXHIBITS – YOUNG ARTISTS' },
 ]
 
-/** Young Artists take priority, so a young artist's sculptures stay in Young Artists. */
 export function catalogueSectionFor(artist: ArtistSubmission, artwork: ArtworkSubmission, override?: ArtistOverride, decision?: ArtworkDecision): CatalogueSectionKey {
-  if (isYoungArtist(artist, override)) return 'young'
-  return isSculpture(artwork, decision) ? 'sculptures' : 'paintings'
+  return sectionOf(artist, artwork, override, decision)
 }
 
 /** Award lines can be separated with "|" (e.g. "GOLD MEMORIAL BOWL 1986 | MEMORIAL EXHIBIT"). */

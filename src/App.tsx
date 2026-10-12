@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
+  AlertTriangle, Check, Eye, EyeOff, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
   Camera, FileSpreadsheet, FileText, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
 } from 'lucide-react'
 import './App.css'
@@ -9,7 +9,7 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
-import { isSculpture, isYoungArtist as isYoungArtistRule } from './lib/catalogueRules'
+import { isSculpture, isYoungArtist as isYoungArtistRule, sectionOf, type CatalogueSectionKey } from './lib/catalogueRules'
 import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { MergeReport } from './lib/wordMerge'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
@@ -25,6 +25,16 @@ const FILTERS = [
   ['young', 'Young Artist'], ['missing-image', 'Missing image'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
+const SECTION_VIEW: [CatalogueSectionKey, string][] = [['sculptures', 'Sculptures'], ['paintings', 'Miniature paintings'], ['young', 'Young Artists']]
+const VIEW_KEY = 'rms-view-settings'
+type ViewSettings = { hideExcluded: boolean; hiddenSections: CatalogueSectionKey[] }
+function loadView(): ViewSettings {
+  try { return { hideExcluded: false, hiddenSections: [], ...JSON.parse(localStorage.getItem(VIEW_KEY) ?? '{}') } }
+  catch { return { hideExcluded: false, hiddenSections: [] } }
+}
+function saveView(view: ViewSettings) {
+  try { localStorage.setItem(VIEW_KEY, JSON.stringify(view)) } catch { /* view settings are a convenience only */ }
+}
 const MEMBERSHIP_LABELS: Record<MembershipType, string> = { 'rms-member': 'RMS Member', 'associate-member': 'Associate Member', 'non-member': 'Non-member' }
 
 function formatSync(value?: string): string {
@@ -119,6 +129,8 @@ export default function App() {
   const [exportingWebsite, setExportingWebsite] = useState(false)
   const [backupUrl, setBackupUrl] = useState<string>()
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
+  const [view, setViewState] = useState<ViewSettings>(loadView)
+  const setView = (next: ViewSettings) => { setViewState(next); saveView(next) }
   const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
   const [importNotice, setImportNotice] = useState<string>()
   const [wordReview, setWordReview] = useState<{ report: MergeReport; flags: string[]; fixes: string[] }>()
@@ -154,10 +166,12 @@ export default function App() {
       const artworks = artist.artworks.filter((artwork) => {
         const state = catalogue.decisions[artwork.id]
         const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle)
+        if (view.hideExcluded && state?.decision === 'excluded') return false
+        if (view.hiddenSections.length && view.hiddenSections.includes(sectionOf(artist, artwork, override, state))) return false
         return searchMatches && matchesArtworkFilters(artist, artwork, state?.decision, isYoungArtist, filters)
       })
       if (artworks.length) return [{ artist, artworks }]
-      if (artist.artworks.length) return []
+      if (artist.artworks.length || view.hideExcluded || view.hiddenSections.length) return []
       const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-votes']
       const memberFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
       const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email) && (!memberFilters.length || memberFilters.includes(artist.membershipType ?? 'non-member'))
@@ -167,9 +181,17 @@ export default function App() {
       if (a.artworks.length > 0 && b.artworks.length === 0) return -1
       return (catalogue.overrides[a.artist.id]?.surname ?? a.artist.surname).localeCompare(catalogue.overrides[b.artist.id]?.surname ?? b.artist.surname)
     })
-  }, [artists, catalogue.decisions, catalogue.overrides, filters, search])
+  }, [artists, catalogue.decisions, catalogue.overrides, filters, search, view])
 
   const allArtworks = artists.flatMap((artist) => artist.artworks)
+  const sectionCounts = useMemo(() => {
+    const counts: Record<CatalogueSectionKey, number> = { sculptures: 0, paintings: 0, young: 0 }
+    for (const artist of artists) for (const artwork of artist.artworks) {
+      const state = catalogue.decisions[artwork.id]
+      if (state?.decision === 'included') counts[sectionOf(artist, artwork, catalogue.overrides[artist.id], state)] += 1
+    }
+    return counts
+  }, [artists, catalogue.decisions, catalogue.overrides])
   const counts = allArtworks.reduce((current, artwork) => {
     const decision = catalogue.decisions[artwork.id]?.decision ?? 'undecided'
     current[decision] += 1
@@ -418,6 +440,17 @@ export default function App() {
             <input ref={imagesInput} className="visually-hidden" type="file" accept="image/*,.heic,.heif,.tif,.tiff" multiple onChange={(event) => void importImageFolder(event.target.files)} />
             <small>Images are matched by spreadsheet filename, then artwork title, and stored on this device for offline use.</small>
             <button className="scan-form-button" onClick={() => { setOcrDraft(blankEntry(entryType)); setOcrOpen(true) }}><Camera size={14} />Scan / add entry form</button>
+          </div>
+          <div className="view-panel">
+            <div className="filter-title"><Eye size={15} /><h2>Show</h2></div>
+            <label className="view-switch"><input type="checkbox" role="switch" checked={view.hideExcluded} onChange={(event) => setView({ ...view, hideExcluded: event.target.checked })} /><span>Hide excluded works</span></label>
+            <div className="view-sections" role="group" aria-label="Show or hide catalogue sections">
+              {SECTION_VIEW.map(([key, label]) => {
+                const shown = !view.hiddenSections.includes(key)
+                return <button key={key} className={shown ? 'shown' : ''} aria-pressed={shown} onClick={() => setView({ ...view, hiddenSections: shown ? [...view.hiddenSections, key] : view.hiddenSections.filter((item) => item !== key) })}>{shown ? <Eye size={14} /> : <EyeOff size={14} />}{label}<b>{sectionCounts[key]}</b></button>
+              })}
+            </div>
+            <small>Counts are included works. Settings are remembered on this device.</small>
           </div>
           <label className="search"><Search size={17} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search artist or artwork" />{search && <button onClick={() => setSearch('')} aria-label="Clear search"><X size={15} /></button>}</label>
           <div className="filter-title"><SlidersHorizontal size={15} /><h2>Filter catalogue</h2></div>

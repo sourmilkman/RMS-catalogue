@@ -14,3 +14,11 @@ export function isYoungArtist(artist: ArtistSubmission, override?: ArtistOverrid
 export function isSculpture(artwork: ArtworkSubmission, decision?: ArtworkDecision): boolean {
   return decision?.sculpture ?? artwork.sculpture ?? false
 }
+
+export type CatalogueSectionKey = 'sculptures' | 'paintings' | 'young'
+
+/** Young Artists take priority, so a young artist's sculptures stay in Young Artists. */
+export function sectionOf(artist: ArtistSubmission, artwork: ArtworkSubmission, override?: ArtistOverride, decision?: ArtworkDecision): CatalogueSectionKey {
+  if (isYoungArtist(artist, override)) return 'young'
+  return isSculpture(artwork, decision) ? 'sculptures' : 'paintings'
+}
