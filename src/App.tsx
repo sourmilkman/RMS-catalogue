@@ -57,7 +57,7 @@ function ReviewGroup({ title, items, note }: { title: string; items: string[]; n
   return <details className="review-group"><summary>{title} <b>{items.length}</b></summary>{note && <p>{note}</p>}<ul>{items.map((item, index) => <li key={index}>{item}</li>)}</ul></details>
 }
 
-function WordReviewPanel({ review, onExclude, onDismiss }: { review: { report: MergeReport; flags: string[]; fixes: string[] }; onExclude: () => void; onDismiss: () => void }) {
+function WordReviewPanel({ review, onDismiss }: { review: { report: MergeReport; flags: string[]; fixes: string[] }; onDismiss: () => void }) {
   const { report, flags, fixes } = review
   return (
     <section className="word-review" aria-label="Word import review">
@@ -69,10 +69,7 @@ function WordReviewPanel({ review, onExclude, onDismiss }: { review: { report: M
       <ReviewGroup title="Duplicate submissions" items={report.duplicates} note="The same title was submitted twice. The second card is excluded; open it if you want to use its image instead." />
       <ReviewGroup title="Automatic text fixes" items={fixes} note="Spacing and brand-name capitals corrected while importing. Your Word files are not changed." />
       <ReviewGroup title="New artist cards (no image yet)" items={report.newArtists} />
-      {report.notInLists.length > 0 && <div className="review-group not-listed">
-        <details><summary>Submissions not in the Word lists <b>{report.notInLists.length}</b></summary><ul>{report.notInLists.map((item) => <li key={item.artistId}>{item.name} — {item.artworkIds.length} work{item.artworkIds.length === 1 ? '' : 's'}</li>)}</ul></details>
-        <button onClick={onExclude}>Exclude these from the catalogue</button>
-      </div>}
+      <ReviewGroup title="Not in the Word lists — left out of the app" items={report.notInLists.map((item) => `${item.name} — ${item.artworkIds.length} work${item.artworkIds.length === 1 ? '' : 's'}`)} note={`Only works in the Word lists are in the exhibition. ${report.omittedWorks} submitted works in total are left out (including other works by listed artists and duplicates). The Google Sheet itself is not changed.`} />
     </section>
   )
 }
@@ -329,9 +326,9 @@ export default function App() {
         `• ${preview.matchedArtists} artists match existing cards (${preview.matchedWorks} works matched, ${preview.addedWorks} added)`,
         `• ${preview.newArtists.length} new artist cards`,
         `• ${preview.nameMatches.length + preview.closeTitles.length} near-matches, ${parsed.fixes.length} text fixes and ${parsed.flags.length} items to check — listed after import`,
-        `• ${preview.notInLists.length} submissions are not in these lists (left unchanged; you can exclude them after import)`,
+        `• ${preview.omittedWorks} submitted works are not in these lists and will be left out of the app (${preview.notInLists.length} artists entirely)`,
         '',
-        'Listed works will be marked Include with the Word title, medium and price; other works by listed artists will be marked Exclude. Images and votes are kept. Continue?',
+        'Only the listed works will remain, marked Include with the Word title, medium and price. Images and votes are kept. Import all the lists together — anything missing from them will not appear. Continue?',
       ].join('\n')
       if (!window.confirm(message)) return
       const report = await catalogue.importWordLists(parsed)
@@ -341,13 +338,7 @@ export default function App() {
     finally { if (wordInput.current) wordInput.current.value = '' }
   }
 
-  const excludeNotInLists = () => {
-    if (!wordReview) return
-    const ids = wordReview.report.notInLists.flatMap((item) => item.artworkIds)
-    if (!window.confirm(`Mark ${ids.length} artworks by ${wordReview.report.notInLists.length} artists who are not in the Word lists as Exclude?`)) return
-    ids.forEach((id) => catalogue.setDecision(id, 'excluded'))
-    setWordReview({ ...wordReview, report: { ...wordReview.report, notInLists: [] } })
-  }
+
 
   const importSheetLink = async () => {
     const link = window.prompt('Paste a public or link-accessible Google Sheets URL:')
@@ -429,7 +420,7 @@ export default function App() {
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
       {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
-      {wordReview && <WordReviewPanel review={wordReview} onExclude={excludeNotInLists} onDismiss={() => setWordReview(undefined)} />}
+      {wordReview && <WordReviewPanel review={wordReview} onDismiss={() => setWordReview(undefined)} />}
       {importNotice && <div className="change-banner import-banner"><Check size={17} /><span>{importNotice}</span><button onClick={() => setImportNotice(undefined)} aria-label="Dismiss import message"><X size={15} /></button></div>}
 
       <section className="summary" aria-label="Catalogue summary">

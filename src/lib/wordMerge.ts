@@ -11,6 +11,8 @@ import { looseKey, type WordArtist, type WordParseResult } from './wordImport'
  * - Works are matched by title, ignoring "(The) Legend of King Arthur –", a leading "The", "(artwork 3)" and
  *   punctuation; then a close match (≥ 85 % similar, or one title is the start of the other).
  * - Matched works take the Word title, medium and price (image and votes are kept). Unmatched Word works are added.
+ * - The Word lists define the exhibition: every artwork not listed (other works of listed artists, duplicate
+ *   submissions, submissions not in any list) is omitted from the result. The Sheet itself is untouched.
  * - The overlay is idempotent and re-applied after every Sheet refresh, so the Word data is never lost.
  */
 
@@ -25,7 +27,9 @@ export interface MergeReport {
   closeTitles: string[]
   /** The same title submitted twice (e.g. two photos): the first copy is used, the second excluded. */
   duplicates: string[]
-  /** Sheet artists whose works are not in any Word list (probably not accepted). */
+  /** Artworks left out because they are not in any Word list. */
+  omittedWorks: number
+  /** Sheet artists with no work in any Word list — omitted from the app. */
   notInLists: { artistId: string; name: string; artworkIds: string[] }[]
 }
 
@@ -90,7 +94,7 @@ function findArtists(word: WordArtist, artists: ArtistSubmission[]): { matches: 
 
 export function applyWordOverlay(base: SourceSnapshot, overlay: Pick<WordOverlay, 'artists'>): MergeResult {
   const artists: ArtistSubmission[] = base.artists.map((artist) => ({ ...artist, artworks: artist.artworks.map((artwork) => ({ ...artwork })) }))
-  const report: MergeReport = { matchedArtists: 0, newArtists: [], matchedWorks: 0, addedWorks: 0, nameMatches: [], closeTitles: [], duplicates: [], notInLists: [] }
+  const report: MergeReport = { matchedArtists: 0, newArtists: [], matchedWorks: 0, addedWorks: 0, nameMatches: [], closeTitles: [], duplicates: [], notInLists: [], omittedWorks: 0 }
   const include = new Set<string>()
   const exclude = new Set<string>()
   const details: MergeResult['details'] = {}
@@ -145,6 +149,14 @@ export function applyWordOverlay(base: SourceSnapshot, overlay: Pick<WordOverlay
         report.addedWorks += 1
       }
       used.add(target.id)
+      // Several submission rows for one person become one card: move the work to the primary row.
+      if (target.artistId !== primary.id) {
+        const from = matches.find((artist) => artist.id === target!.artistId)
+        if (from) from.artworks = from.artworks.filter((artwork) => artwork.id !== target!.id)
+        target.artistId = primary.id
+        target.position = Math.max(0, ...primary.artworks.map((artwork) => artwork.position)) + 1
+        primary.artworks.push(target)
+      }
       target.title = work.title
       target.medium = work.medium
       target.price = work.price
@@ -165,7 +177,13 @@ export function applyWordOverlay(base: SourceSnapshot, overlay: Pick<WordOverlay
     if (touched.has(artist.id) || !artist.artworks.length) continue
     report.notInLists.push({ artistId: artist.id, name: sheetName(artist), artworkIds: artist.artworks.map((artwork) => artwork.id) })
   }
-  return { snapshot: { ...base, artists }, report, include: [...include], exclude: [...exclude], details }
+  // Only the listed works are in the exhibition: everything else is left out of the app.
+  const listed = new Set(include)
+  const kept = artists
+    .map((artist) => ({ ...artist, artworks: artist.artworks.filter((artwork) => listed.has(artwork.id)) }))
+    .filter((artist) => artist.artworks.length)
+  report.omittedWorks = artists.reduce((sum, artist) => sum + artist.artworks.length, 0) - kept.reduce((sum, artist) => sum + artist.artworks.length, 0)
+  return { snapshot: { ...base, artists: kept }, report, include: [...include], exclude: [...exclude], details }
 }
 
 export function overlayFromParse(parsed: WordParseResult): WordOverlay {

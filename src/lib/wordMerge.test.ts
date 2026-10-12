@@ -52,6 +52,8 @@ describe('Word lists merged into the existing cards', () => {
       'Diana M Wyles → "Diana Wyles" (surname + first initial)',
     ]))
     expect(merged.include).toEqual(expect.arrayContaining(['s3a-0', 's3b-0']))
+    const hallahan = merged.snapshot.artists.filter((artist) => /hallahan/i.test(artist.fullName))
+    expect(hallahan.map((artist) => [artist.id, artist.artworks.map((artwork) => artwork.title)])).toEqual([['s3a', ['My Robin', 'My Magpie']]])
     expect(merged.exclude).toContain('s3a-1')
     expect(merged.details.s2).toMatchObject({ firstName: 'Linda', surname: 'Smith', societyInitials: 'PPSWA' })
   })
@@ -77,10 +79,14 @@ describe('Word lists merged into the existing cards', () => {
     expect(isYoungArtist(result.snapshot.artists[0], { artistId: 's9', firstName: 'Drithi', surname: 'Puliyanda', youngArtist: true, youngArtistSet: true, societyInitials: '', awardText: '' })).toBe(true)
   })
 
-  it('lists submissions that are not in any Word list without changing them', () => {
+  it('leaves out everything not in the Word lists: unlisted artists, their works, other works and duplicates', () => {
     expect(merged.report.notInLists).toEqual([{ artistId: 's5', name: 'Not Accepted', artworkIds: ['s5-0'] }])
-    expect(merged.include).not.toContain('s5-0')
-    expect(merged.exclude).not.toContain('s5-0')
+    const ids = merged.snapshot.artists.flatMap((artist) => artist.artworks.map((artwork) => artwork.id))
+    expect(merged.snapshot.artists.some((artist) => artist.id === 's5')).toBe(false)
+    expect(ids).not.toContain('s1-2')
+    expect(ids).not.toContain('s3a-1')
+    expect(ids.sort()).toEqual([...merged.include].sort())
+    expect(merged.report.omittedWorks).toBe(4)
   })
 
   it('is idempotent: re-applying (as after a Sheet refresh) changes nothing', () => {
