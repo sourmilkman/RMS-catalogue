@@ -18,6 +18,7 @@ import {
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision, Verdict } from '../types'
 import { isValidHttpUrl } from './identity'
 import { capitaliseName } from './names'
+import { isYoungArtist as isYoungArtistRule } from './catalogueRules'
 
 export interface ExportRow {
   artistId: string
@@ -51,7 +52,7 @@ export function getExportRows(artists: ArtistSubmission[], decisions: Record<str
         emitted.add(field)
         return value
       }
-      const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
+      const isYoungArtist = isYoungArtistRule(artist, override)
       const youngArtistLabel = artist.youngArtistAge !== undefined
         ? `${isYoungArtist ? 'Young Artist · ' : ''}Age ${artist.youngArtistAge}`
         : isYoungArtist ? 'Young Artist' : ''

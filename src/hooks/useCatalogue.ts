@@ -95,13 +95,19 @@ export function useCatalogue() {
     })
   }, [])
 
-  const importSource = useCallback(async (incoming: SourceSnapshot) => {
+  /** `finalList`: the import is the confirmed exhibition list (Word import) — its prices win and every artwork without a manual decision is included. */
+  const importSource = useCallback(async (incoming: SourceSnapshot, options: { finalList?: boolean } = {}) => {
     for (const local of sourceRef.current?.artists.filter((artist) => artist.locallyAdded) ?? []) {
       const index = incoming.artists.findIndex((artist) => artist.id === local.id)
       if (index >= 0) incoming.artists[index] = local; else incoming.artists.push(local)
     }
-    const next = carryLocalImages(sourceRef.current, incoming)
+    const next = carryLocalImages(sourceRef.current, incoming, { keepIncomingPrices: options.finalList })
     const result = reconcileSource(sourceRef.current, next, decisionsRef.current)
+    if (options.finalList) {
+      for (const [artworkId, decision] of Object.entries(result.decisions)) {
+        if (!decision.manual) result.decisions[artworkId] = { ...decision, decision: 'included' }
+      }
+    }
     setSource(next)
     sourceRef.current = next
     setDecisions(result.decisions)
@@ -168,6 +174,18 @@ export function useCatalogue() {
     })
   }, [])
 
+  const setSculpture = useCallback((artworkId: string, sculpture: boolean) => {
+    setDecisions((current) => {
+      const existing = current[artworkId]
+      if (!existing) return current
+      const nextItem = { ...existing, sculpture }
+      const next = { ...current, [artworkId]: nextItem }
+      decisionsRef.current = next
+      void db.decisions.put(nextItem)
+      return next
+    })
+  }, [])
+
   const setField = useCallback((artworkId: string, field: ExportField, included: boolean) => {
     setDecisions((current) => {
       const existing = current[artworkId]
@@ -189,8 +207,7 @@ export function useCatalogue() {
         artistId,
         firstName: patch.firstName ?? existing?.firstName ?? artist.firstName,
         surname: patch.surname ?? existing?.surname ?? artist.surname,
-        youngArtist: patch.youngArtist ?? existing?.youngArtist ?? false,
-        sculptor: patch.sculptor ?? existing?.sculptor ?? false,
+        youngArtist: patch.youngArtist ?? existing?.youngArtist ?? artist.youngArtist ?? false,
         societyInitials: patch.societyInitials ?? existing?.societyInitials ?? '',
         awardText: patch.awardText ?? existing?.awardText ?? '',
       }
@@ -212,5 +229,5 @@ export function useCatalogue() {
     })
   }, [])
 
-  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setArtistOverride, resetDecisions }
+  return { source, decisions, overrides, changes, removedCount, syncing, error, online, refresh, importSource, importImages, setLocalImage, setArtworkPrice, addLocalArtist, setDecision, setField, setSculpture, setArtistOverride, resetDecisions }
 }

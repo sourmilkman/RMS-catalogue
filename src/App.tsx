@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
-  Camera, FileSpreadsheet, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
+  Camera, FileSpreadsheet, FileText, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
@@ -9,6 +9,7 @@ import { EXPORT_FIELDS } from './lib/reconcile'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
+import { isSculpture, isYoungArtist as isYoungArtistRule } from './lib/catalogueRules'
 import { blankEntry, findDuplicateArtist, preserveArtworkImages, runOfflineOcr, runOnlineOcr, type OcrEntryDraft, type OcrProvider } from './lib/formOcr'
 import type { ArtistSubmission, ArtworkSubmission, CatalogueDecision, ExportField, MembershipType, Verdict } from './types'
 
@@ -93,8 +94,10 @@ export default function App() {
   const [googleSetupMessage, setGoogleSetupMessage] = useState(() => hasGoogleClientId() ? 'Client ID saved on this device.' : '')
   const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
   const [importNotice, setImportNotice] = useState<string>()
+  const [wordFlags, setWordFlags] = useState<string[]>([])
   const initialExpansion = useRef(false)
   const spreadsheetInput = useRef<HTMLInputElement>(null)
+  const wordInput = useRef<HTMLInputElement>(null)
   const imagesInput = useRef<HTMLInputElement>(null)
   const entryFormInput = useRef<HTMLInputElement>(null)
   const [ocrOpen, setOcrOpen] = useState(false)
@@ -120,7 +123,7 @@ export default function App() {
     return artists.flatMap((artist) => {
       const override = catalogue.overrides[artist.id]
       const artistMatches = [artist.fullName, artist.email, override?.firstName, override?.surname].some((value) => value?.toLocaleLowerCase().includes(needle))
-      const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
+      const isYoungArtist = isYoungArtistRule(artist, override)
       const artworks = artist.artworks.filter((artwork) => {
         const state = catalogue.decisions[artwork.id]
         const searchMatches = !needle || artistMatches || artwork.title.toLocaleLowerCase().includes(needle) || artwork.medium?.toLocaleLowerCase().includes(needle)
@@ -227,6 +230,23 @@ export default function App() {
     finally { if (spreadsheetInput.current) spreadsheetInput.current.value = '' }
   }
 
+  const importWordDocument = async (file?: File) => {
+    if (!file) return
+    try {
+      const { parseWordDocument } = await import('./lib/wordImport')
+      const result = await parseWordDocument(await file.arrayBuffer(), file.name)
+      const { stats, flags } = result
+      const flagText = flags.length ? `\n\n${flags.length} item${flags.length === 1 ? '' : 's'} to check (also shown after import):\n• ${flags.slice(0, 8).join('\n• ')}${flags.length > 8 ? `\n…and ${flags.length - 8} more` : ''}` : '\n\nEverything was read cleanly.'
+      const message = `${file.name}\n\nFound ${stats.artists} artists and ${stats.artworks} artworks — ${stats.sculptures} sculpture${stats.sculptures === 1 ? '' : 's'}, ${stats.youngArtists} young artist${stats.youngArtists === 1 ? '' : 's'}.${flagText}\n\nThis replaces the current catalogue data with the Word document (locally added entry forms are kept) and marks every artwork as Include. Continue?`
+      if (!window.confirm(message)) return
+      await catalogue.importSource(result.snapshot, { finalList: true })
+      for (const [artistId, details] of Object.entries(result.artistDetails)) catalogue.setArtistOverride(artistId, details)
+      setWordFlags(flags)
+      setImportNotice(`Imported ${stats.artists} artists and ${stats.artworks} artworks from ${file.name}.${flags.length ? ` ${flags.length} item${flags.length === 1 ? '' : 's'} need checking — listed below and on the artwork cards.` : ''}`)
+    } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Word import failed.') }
+    finally { if (wordInput.current) wordInput.current.value = '' }
+  }
+
   const importSheetLink = async () => {
     const link = window.prompt('Paste a public or link-accessible Google Sheets URL:')
     if (!link) return
@@ -304,6 +324,7 @@ export default function App() {
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
       {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
+      {wordFlags.length > 0 && <details className="change-banner word-flags"><summary><AlertTriangle size={17} />{wordFlags.length} Word import item{wordFlags.length === 1 ? '' : 's'} to check</summary><ul>{wordFlags.map((flag, index) => <li key={index}>{flag}</li>)}</ul><button onClick={() => setWordFlags([])}>Dismiss</button></details>}
       {importNotice && <div className="change-banner import-banner"><Check size={17} /><span>{importNotice}</span><button onClick={() => setImportNotice(undefined)} aria-label="Dismiss import message"><X size={15} /></button></div>}
 
       <section className="summary" aria-label="Catalogue summary">
@@ -320,6 +341,8 @@ export default function App() {
           <div className="import-panel">
             <div className="filter-title"><FileUp size={15} /><h2>Import offline data</h2></div>
             <p>Merge another catalogue while preserving existing decisions.</p>
+            <button className="word-import" onClick={() => wordInput.current?.click()}><FileText size={14} />Import Word document</button>
+            <input ref={wordInput} className="visually-hidden" type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => void importWordDocument(event.target.files?.[0])} />
             <button onClick={() => spreadsheetInput.current?.click()}><FileUp size={14} />Import spreadsheet file</button>
             <input ref={spreadsheetInput} className="visually-hidden" type="file" accept=".csv,.tsv,.txt,.html,.htm,.xls,.xlsx,.xlsm,.xlsb,.ods,.fods" onChange={(event) => void importSpreadsheet(event.target.files?.[0])} />
             <button onClick={() => void importSheetLink()}><Link2 size={14} />Import Google Sheets link</button>
@@ -372,7 +395,7 @@ export default function App() {
           <div className="artist-list">
             {visibleArtists.map(({ artist, artworks }) => {
               const override = catalogue.overrides[artist.id]
-              const isYoungArtist = artist.youngArtistAge !== undefined || (override?.youngArtist ?? false)
+              const isYoungArtist = isYoungArtistRule(artist, override)
               const isExpanded = expanded.has(artist.id)
               const includedCount = artist.artworks.filter((artwork) => catalogue.decisions[artwork.id]?.decision === 'included').length
               const warningCount = artist.warnings.length + artist.artworks.reduce((sum, artwork) => sum + artwork.warnings.length, 0)
@@ -393,7 +416,6 @@ export default function App() {
                     </div>
                     <div className="artist-meta">
                       <label className={`young-toggle ${isYoungArtist ? 'active' : ''}`} title={artist.youngArtistAge !== undefined ? 'Age supplied by Google Sheet' : undefined}><input type="checkbox" checked={isYoungArtist} disabled={artist.youngArtistAge !== undefined} onChange={(event) => catalogue.setArtistOverride(artist.id, { youngArtist: event.target.checked })} />Young Artist{artist.youngArtistAge !== undefined ? ` · age ${artist.youngArtistAge}` : ''}</label>
-                      <label className={`young-toggle ${override?.sculptor ? 'active' : ''}`} title="Lists this artist under Sculptures in the printed catalogue"><input type="checkbox" checked={override?.sculptor ?? false} onChange={(event) => catalogue.setArtistOverride(artist.id, { sculptor: event.target.checked })} />Sculptor</label>
                       <span>{artist.artworks.length} submitted · {includedCount} included</span>
                       {warningCount > 0 && <span className="warning-count"><AlertTriangle size={14} />{warningCount} warning{warningCount === 1 ? '' : 's'}</span>}
                     </div>
@@ -410,11 +432,16 @@ export default function App() {
                           <ImagePreview key={artwork.localImageName ?? artwork.imageUrl} artwork={artwork} onOpen={() => setLightbox(artwork)} />
                           <div className="artwork-details">
                             <div className="artwork-topline">
-                              <span className={`vote verdict-${artwork.verdict}`}>{verdictLabel(artwork.verdict)} · Y {artwork.votes.yes} / N {artwork.votes.no} / M {artwork.votes.maybe}</span>
+                              {artwork.votes.valid || artwork.votes.raw ? <span className={`vote verdict-${artwork.verdict}`}>{verdictLabel(artwork.verdict)} · Y {artwork.votes.yes} / N {artwork.votes.no} / M {artwork.votes.maybe}</span> : <span className="vote verdict-none">No vote data</span>}
                               <span className={`decision-label ${decision}`}>{decision}</span>
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
                             <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
+                            <div className="section-toggle" role="group" aria-label={`Catalogue section for ${artwork.title || 'artwork'}`}>
+                              <button className={!isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={!isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, false)}>Miniature painting</button>
+                              <button className={isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, true)}>Sculpture</button>
+                            </div>
+                            {isYoungArtist && <p className="section-note">Young Artist — catalogued under Young Artists.</p>}
                             <label className="price-input"><span>Catalogue price</span><span><b>£</b><input inputMode="decimal" value={artwork.price ?? ''} placeholder="0.00" onChange={(event) => void catalogue.setArtworkPrice(artwork.id, event.target.value)} /></span></label>
                             {changed?.length > 0 && <p className="updated-note"><RefreshCw size={14} />Updated since last sync: {changed.join(', ')}</p>}
                             {(artist.warnings.length > 0 || artwork.warnings.length > 0) && <div className="warnings">{[...artist.warnings, ...artwork.warnings].map((warning, index) => <span key={`${warning.code}-${index}`}><AlertTriangle size={13} />{warning.message}</span>)}</div>}
@@ -423,7 +450,7 @@ export default function App() {
                             <div className="decision-row" role="group" aria-label={`Catalogue decision for ${artwork.title || 'artwork'}`}>
                               {(['included', 'excluded', 'undecided'] as CatalogueDecision[]).map((value) => <button className={decision === value ? 'selected' : ''} onClick={() => catalogue.setDecision(artwork.id, value)} key={value}>{value === 'included' ? 'Include' : value === 'excluded' ? 'Exclude' : 'Undecided'}</button>)}
                             </div>
-                            {!state?.manual && <p className="recommendation">Initial recommendation from the vote result — change it at any time.</p>}
+                            {!state?.manual && <p className="recommendation">{artwork.votes.valid || artwork.votes.raw ? 'Initial recommendation from the vote result — change it at any time.' : 'Included from the imported exhibition list — change it at any time.'}</p>}
 
                             <details className="field-controls">
                               <summary>Word fields <span>green included · red omitted</span></summary>

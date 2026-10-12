@@ -27,6 +27,8 @@ export interface ArtworkSubmission {
   medium?: string
   dimensions?: string
   price?: string
+  /** Set by a Word import from its section heading/column; the per-artwork toggle overrides it. */
+  sculpture?: boolean
   votes: Votes
   verdict: Verdict
   warnings: DataWarning[]
@@ -45,6 +47,8 @@ export interface ArtistSubmission {
   locallyAdded?: boolean
   dateOfBirth?: string
   youngArtistAge?: number
+  /** Set by a Word import (Young Artists section or column). */
+  youngArtist?: boolean
   artworks: ArtworkSubmission[]
   warnings: DataWarning[]
 }
@@ -60,6 +64,8 @@ export interface ArtworkDecision {
   artworkId: string
   decision: CatalogueDecision
   manual: boolean
+  /** Per-artwork catalogue section toggle; undefined falls back to the imported value. */
+  sculpture?: boolean
   fields: Record<ExportField, boolean>
 }
 
@@ -68,7 +74,6 @@ export interface ArtistOverride {
   firstName: string
   surname: string
   youngArtist: boolean
-  sculptor?: boolean
   societyInitials: string
   awardText: string
 }

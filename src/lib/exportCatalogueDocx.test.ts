@@ -19,11 +19,11 @@ const young = makeArtist('c', 'Amy', 'Baker', ['Wren'], { youngArtistAge: 15 })
 const sculptor = makeArtist('d', 'Zoe', 'Mundy', ['Bronze Cat'])
 const mcSculptor = makeArtist('e', 'Al', 'McCann', ['Stone Owl'])
 const all = [smith, abbot, young, sculptor, mcSculptor]
-const decisions = Object.fromEntries(all.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, included])))
+const decisions: Record<string, ArtworkDecision> = Object.fromEntries(all.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, included])))
+decisions['d-0'] = { ...included, sculpture: true }
+decisions['e-0'] = { ...included, sculpture: true }
 const overrides = {
   a: override('a', { societyInitials: 'RMS', awardText: 'Gold Memorial Bowl 2026' }, smith),
-  d: override('d', { sculptor: true }, sculptor),
-  e: override('e', { sculptor: true }, mcSculptor),
 }
 
 describe('printed catalogue Word export', () => {
@@ -43,9 +43,33 @@ describe('printed catalogue Word export', () => {
   })
 
   it('lists a young sculptor under Young Artists and omits empty sections and excluded works', () => {
-    const youngSculptor = { d: override('d', { sculptor: true, youngArtist: true }, sculptor) }
-    const sections = catalogueSections([sculptor, smith], { 'd-0': included, 'a-0': excluded }, youngSculptor)
+    const youngSculptor = { d: override('d', { youngArtist: true }, sculptor) }
+    const sections = catalogueSections([sculptor, smith], { 'd-0': { ...included, sculpture: true }, 'a-0': excluded }, youngSculptor)
     expect(sections.map((section) => section.key)).toEqual(['young'])
+  })
+
+  it('splits one artist across Sculptures and Miniature Paintings by artwork', () => {
+    const both = makeArtist('m', 'Jenny', 'Musker', ['Wren', 'Bronze Wren', 'Robin'])
+    const mixed = { 'm-0': included, 'm-1': { ...included, sculpture: true }, 'm-2': included }
+    const sections = catalogueSections([both], mixed, {})
+    expect(sections.map((section) => [section.key, section.entries.map((entry) => [entry.heading, entry.artworks.map((artwork) => `${artwork.number} ${artwork.description}`)])])).toEqual([
+      ['sculptures', [['JENNY MUSKER', ['001 Bronze Wren (watercolour on paper)']]]],
+      ['paintings', [['JENNY MUSKER', ['002 Wren (watercolour on paper)', '003 Robin (watercolour on paper)']]]],
+    ])
+  })
+
+  it('uses the imported sculpture value until the toggle overrides it', () => {
+    const imported = makeArtist('w', 'Ann', 'Ray', ['Hare'])
+    imported.artworks[0].sculpture = true
+    expect(catalogueSections([imported], { 'w-0': included }, {})[0].key).toBe('sculptures')
+    expect(catalogueSections([imported], { 'w-0': { ...included, sculpture: false } }, {})[0].key).toBe('paintings')
+  })
+
+  it('prints each award line separated by "|" on its own line', async () => {
+    const withAwards = { a: override('a', { awardText: 'Gold Memorial Bowl 1986 | Memorial Exhibit' }, smith) }
+    const xml = await (await JSZip.loadAsync(await (await createPrintedCatalogueDocx([smith], { 'a-0': included }, withAwards)).arrayBuffer())).file('word/document.xml')!.async('string')
+    expect(xml).toContain('>GOLD MEMORIAL BOWL 1986<')
+    expect(xml).toContain('>MEMORIAL EXHIBIT<')
   })
 
   it('creates a portrait A5 Word document with section headings', async () => {

@@ -102,7 +102,7 @@ export function assignLocalImage(snapshot: SourceSnapshot, artworkId: string, fi
   }
 }
 
-export function carryLocalImages(previous: SourceSnapshot | undefined, next: SourceSnapshot): SourceSnapshot {
+export function carryLocalImages(previous: SourceSnapshot | undefined, next: SourceSnapshot, options: { keepIncomingPrices?: boolean } = {}): SourceSnapshot {
   if (!previous) return next
   const prior = previous.artists.flatMap((artist) => artist.artworks).filter((artwork) => artwork.localImage || artwork.price)
   return {
@@ -114,6 +114,7 @@ export function carryLocalImages(previous: SourceSnapshot | undefined, next: Sou
           ?? prior.find((item) => item.imageUrl && item.imageUrl === artwork.imageUrl)
           ?? prior.find((item) => item.title && normalizeIdentity(item.title) === normalizeIdentity(artwork.title))
         const withImage = match?.localImage ? withLocalImage(artwork, new File([match.localImage], match.localImageName ?? 'local-image', { type: match.localImage.type })) : artwork
+        if (options.keepIncomingPrices && artwork.price) return withImage
         return match?.price ? { ...withImage, price: match.price } : withImage
       }),
     })),

@@ -2,8 +2,11 @@ import {
   AlignmentType, BorderStyle, Document, Footer, PageNumber, Packer, Paragraph, Table, TableCell,
   TableLayoutType, TableRow, TextRun, WidthType,
 } from 'docx'
-import type { ArtistOverride, ArtistSubmission, ArtworkDecision } from '../types'
+import type { ArtistOverride, ArtistSubmission, ArtworkDecision, ArtworkSubmission } from '../types'
 import { capitaliseName } from './names'
+import { isSculpture, isYoungArtist } from './catalogueRules'
+
+export { isSculpture, isYoungArtist }
 
 const FONT = 'Times New Roman'
 const PAGE_WIDTH = 8391
@@ -31,37 +34,43 @@ export const CATALOGUE_SECTIONS: { key: CatalogueSectionKey; title: string }[] =
   { key: 'young', title: 'LIST OF EXHIBITS – YOUNG ARTISTS' },
 ]
 
-export function catalogueSectionFor(artist: ArtistSubmission, override?: ArtistOverride): CatalogueSectionKey {
-  // Young Artists take priority, so a young sculptor is listed under Young Artists.
-  if (artist.youngArtistAge !== undefined || override?.youngArtist) return 'young'
-  if (override?.sculptor) return 'sculptures'
-  return 'paintings'
+/** Young Artists take priority, so a young artist's sculptures stay in Young Artists. */
+export function catalogueSectionFor(artist: ArtistSubmission, artwork: ArtworkSubmission, override?: ArtistOverride, decision?: ArtworkDecision): CatalogueSectionKey {
+  if (isYoungArtist(artist, override)) return 'young'
+  return isSculpture(artwork, decision) ? 'sculptures' : 'paintings'
+}
+
+/** Award lines can be separated with "|" (e.g. "GOLD MEMORIAL BOWL 1986 | MEMORIAL EXHIBIT"). */
+export function awardLines(awardText?: string): string[] {
+  return (awardText ?? '').split('|').map((line) => line.trim().toLocaleUpperCase()).filter(Boolean)
 }
 
 function sortKey(artist: ArtistSubmission, overrides: Record<string, ArtistOverride>): string {
   return `${overrides[artist.id]?.surname ?? artist.surname} ${overrides[artist.id]?.firstName ?? artist.firstName}`.trim()
 }
 
-/** Sections in fixed order (Sculptures, Miniature Paintings, Young Artists), each A–Z by surname, numbered continuously. Empty sections are omitted. */
+/** Sections in fixed order (Sculptures, Miniature Paintings, Young Artists), each A–Z by surname, numbered continuously. An artist with works in two sections appears in both. Empty sections are omitted. */
 export function catalogueSections(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>, startNumber = 1) {
   let number = startNumber
   const accepted = artists
     .filter((artist) => artist.artworks.some((artwork) => decisions[artwork.id]?.decision === 'included'))
     .sort((a, b) => sortKey(a, overrides).localeCompare(sortKey(b, overrides), 'en-GB', { sensitivity: 'base' }))
   return CATALOGUE_SECTIONS.flatMap((section) => {
-    const entries = accepted.filter((artist) => catalogueSectionFor(artist, overrides[artist.id]) === section.key).map((artist) => {
+    const entries = accepted.flatMap((artist) => {
       const override = overrides[artist.id]
+      const artworks = artist.artworks.filter((artwork) => decisions[artwork.id]?.decision === 'included' && catalogueSectionFor(artist, artwork, override, decisions[artwork.id]) === section.key)
+      if (!artworks.length) return []
       const name = capitaliseName(`${override?.firstName ?? artist.firstName} ${override?.surname ?? artist.surname}`).toLocaleUpperCase()
-      return {
+      return [{
         artistId: artist.id,
         heading: [name, override?.societyInitials?.trim().toLocaleUpperCase()].filter(Boolean).join(' '),
-        awardText: override?.awardText?.trim().toLocaleUpperCase() ?? '',
-        artworks: artist.artworks.filter((artwork) => decisions[artwork.id]?.decision === 'included').map((artwork) => ({
+        awardText: awardLines(override?.awardText).join(' | '),
+        artworks: artworks.map((artwork) => ({
           number: String(number++).padStart(3, '0'),
           description: artwork.medium ? `${artwork.title || 'Untitled'} (${artwork.medium})` : artwork.title || 'Untitled',
           price: artwork.price?.replace(/^£\s*/, '') ?? '',
         })),
-      }
+      }]
     })
     return entries.length ? [{ ...section, entries }] : []
   })
@@ -81,7 +90,7 @@ export async function createPrintedCatalogueDocx(artists: ArtistSubmission[], de
     for (const entry of section.entries) {
       const rows = [
         new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.heading, { bold: true, before: 160, after: entry.awardText ? 0 : 65, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] }),
-        ...(entry.awardText ? [new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(entry.awardText, { italic: true, after: 55, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] })] : []),
+        ...awardLines(entry.awardText).map((line, index, lines) => new TableRow({ cantSplit: true, children: [cell([paragraph('')], 650), cell([paragraph(line, { italic: true, after: index === lines.length - 1 ? 55 : 0, keepNext: true })], 5350, 100), cell([paragraph('')], 900)] })),
         ...entry.artworks.map((artwork) => new TableRow({ cantSplit: true, children: [
           cell([paragraph(artwork.number, { align: AlignmentType.RIGHT })], 650),
           cell([paragraph(artwork.description)], 5350, 100),
