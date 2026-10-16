@@ -1,6 +1,6 @@
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision } from '../types'
 import { awardLines, catalogueSections } from './exportCatalogueDocx'
-import { artworkSize } from './dimensions'
+import { artworkSize, sizeLabel } from './dimensions'
 
 /**
  * One row per catalogued artwork for the online exhibition, numbered exactly as the printed catalogue.
@@ -45,7 +45,7 @@ export function websiteRows(artists: ArtistSubmission[], decisions: Record<strin
       title: artwork.title,
       medium: artwork.medium ?? '',
       dimensions: size?.value ?? '',
-      sizeSource: size ? (size.source === 'given' ? 'Given' : 'From image filename') : '',
+      sizeSource: size ? sizeLabel(size) : '',
       price: item.price,
       imageUrl: artwork.imageUrl ?? '',
       imageFile: artwork.localImageName ?? '',

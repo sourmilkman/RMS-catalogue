@@ -3,9 +3,24 @@ import type { ArtistOverride, ArtistSubmission, ArtworkDecision, CatalogueDecisi
 import { db } from '../lib/db'
 import { reconcileSource } from '../lib/reconcile'
 import { getRmsReviewData } from '../lib/sheet'
-import { applyLocalImages, assignLocalImage, carryLocalImages } from '../lib/imports'
+import { assignLocalImage, carryLocalImages } from '../lib/imports'
+import { matchImages, type ImageMatchResult } from '../lib/imageMatch'
 import type { WordParseResult } from '../lib/wordImport'
 import { applyWordOverlay, overlayFromParse, type MergeReport, type WordOverlay } from '../lib/wordMerge'
+
+/** The catalogue data is saved without image files; images live in their own table (see attachImages). */
+function withoutImages(snapshot: SourceSnapshot): SourceSnapshot {
+  return { ...snapshot, artists: snapshot.artists.map((artist) => ({ ...artist, artworks: artist.artworks.map(({ localImage: _image, ...artwork }) => artwork) })) }
+}
+async function persistSource(snapshot: SourceSnapshot) {
+  await db.source.put(withoutImages(snapshot))
+}
+function attachImages(snapshot: SourceSnapshot, images: Map<string, { name: string; blob: Blob }>): SourceSnapshot {
+  return { ...snapshot, artists: snapshot.artists.map((artist) => ({ ...artist, artworks: artist.artworks.map((artwork) => {
+    const image = images.get(artwork.id)
+    return image ? { ...artwork, localImage: image.blob, localImageName: image.name } : artwork
+  }) })) }
+}
 
 export function useCatalogue() {
   const [source, setSource] = useState<SourceSnapshot>()
@@ -47,7 +62,7 @@ export function useCatalogue() {
       setRemovedCount(result.removedCount)
       setError(undefined)
       await db.transaction('rw', db.source, db.decisions, async () => {
-        await db.source.put(next)
+        await persistSource(next)
         await db.decisions.clear()
         await db.decisions.bulkPut(Object.values(result.decisions))
       })
@@ -62,8 +77,13 @@ export function useCatalogue() {
   useEffect(() => {
     let active = true
     void (async () => {
-      const [cached, storedDecisions, storedOverrides, storedOverlay] = await Promise.all([db.source.get('latest'), db.decisions.toArray(), db.artistOverrides.toArray(), db.overlays.get('word')])
+      const [stored, storedDecisions, storedOverrides, storedOverlay, storedImages] = await Promise.all([db.source.get('latest'), db.decisions.toArray(), db.artistOverrides.toArray(), db.overlays.get('word'), db.images.toArray()])
       if (!active) return
+      // Older versions kept images inside the catalogue data: move them to the image table once.
+      const legacy = stored?.artists.flatMap((artist) => artist.artworks.filter((artwork) => artwork.localImage).map((artwork) => ({ artworkId: artwork.id, name: artwork.localImageName ?? `${artwork.id}.jpg`, blob: artwork.localImage! }))) ?? []
+      if (legacy.length) { await db.images.bulkPut(legacy); if (stored) await persistSource(stored) }
+      const imageMap = new Map([...legacy, ...storedImages].map((image) => [image.artworkId, image]))
+      const cached = stored ? attachImages(stored, imageMap) : undefined
       overlayRef.current = storedOverlay
       if (storedOverlay) setWordLists({ files: storedOverlay.files, importedAt: storedOverlay.importedAt })
       if (cached) setSource(cached)
@@ -125,19 +145,24 @@ export function useCatalogue() {
     setRemovedCount(result.removedCount)
     setError(undefined)
     await db.transaction('rw', db.source, db.decisions, async () => {
-      await db.source.put(next)
+      await persistSource(next)
       await db.decisions.clear()
       await db.decisions.bulkPut(Object.values(result.decisions))
     })
   }, [])
 
-  const importImages = useCallback(async (files: File[]) => {
+  /** Matches a folder of images to artworks (artist first, then title) and stores them on this device. */
+  const importImages = useCallback(async (files: File[], overridesNow: Record<string, ArtistOverride>): Promise<ImageMatchResult<{ name: string; path: string; file: File }>> => {
     if (!sourceRef.current) throw new Error('Import catalogue data before importing images.')
-    const result = applyLocalImages(sourceRef.current, files)
-    setSource(result.snapshot)
-    sourceRef.current = result.snapshot
-    await db.source.put(result.snapshot)
-    return { matched: result.matched, unmatched: result.unmatched }
+    const images = files.filter((file) => file.type.startsWith('image/') || /\.(avif|bmp|gif|heic|heif|jpe?g|png|tiff?|webp)$/i.test(file.name))
+    const result = matchImages(sourceRef.current.artists, overridesNow, images.map((file) => ({ name: file.name, path: file.webkitRelativePath || file.name, file })))
+    let next = sourceRef.current
+    for (const assignment of result.assignments) next = assignLocalImage(next, assignment.artworkId, assignment.file.file)
+    setSource(next)
+    sourceRef.current = next
+    await db.images.bulkPut(result.assignments.map((assignment) => ({ artworkId: assignment.artworkId, name: assignment.file.name, blob: assignment.file.file })))
+    await persistSource(next)
+    return result
   }, [])
 
   const setLocalImage = useCallback(async (artworkId: string, file: File) => {
@@ -145,7 +170,8 @@ export function useCatalogue() {
     const next = assignLocalImage(sourceRef.current, artworkId, file)
     setSource(next)
     sourceRef.current = next
-    await db.source.put(next)
+    await db.images.put({ artworkId, name: file.name, blob: file })
+    await persistSource(next)
   }, [])
 
   const setArtworkPrice = useCallback(async (artworkId: string, price: string) => {
@@ -153,7 +179,7 @@ export function useCatalogue() {
     const next = { ...sourceRef.current, artists: sourceRef.current.artists.map((artist) => ({ ...artist, artworks: artist.artworks.map((artwork) => artwork.id === artworkId ? { ...artwork, price: price.replace(/^£\s*/, '') } : artwork) })) }
     setSource(next)
     sourceRef.current = next
-    await db.source.put(next)
+    await persistSource(next)
   }, [])
 
   const addLocalArtist = useCallback(async (artist: ArtistSubmission, initial: Record<string, Pick<ArtworkDecision, 'decision'>>, replaceArtistId?: string) => {
@@ -177,7 +203,7 @@ export function useCatalogue() {
     setDecisions(nextDecisions)
     decisionsRef.current = nextDecisions
     await db.transaction('rw', db.source, db.decisions, async () => {
-      await db.source.put(next)
+      await persistSource(next)
       if (removedArtworkIds.size) await db.decisions.bulkDelete([...removedArtworkIds])
       await db.decisions.bulkPut(artist.artworks.map((artwork) => nextDecisions[artwork.id]))
     })
@@ -244,7 +270,7 @@ export function useCatalogue() {
     setChanges(result.changes)
     await db.transaction('rw', db.source, db.decisions, db.overlays, async () => {
       await db.overlays.put(overlay)
-      await db.source.put(next)
+      await persistSource(next)
       await db.decisions.clear()
       await db.decisions.bulkPut(Object.values(result.decisions))
     })

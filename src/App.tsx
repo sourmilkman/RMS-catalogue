@@ -6,7 +6,7 @@ import {
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
-import { artworkSize } from './lib/dimensions'
+import { artworkSize, sizeFromFilenameDetailed } from './lib/dimensions'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
@@ -132,6 +132,7 @@ export default function App() {
   const setView = (next: ViewSettings) => { setViewState(next); saveView(next) }
   const [uploadDriveImages, setUploadDriveImages] = useState(() => localStorage.getItem('rms-upload-drive-images') === 'true')
   const [importNotice, setImportNotice] = useState<string>()
+  const [imageReview, setImageReview] = useState<{ assignments: unknown[]; approximate: string[]; spares: string[]; unmatchedFiles: string[]; ambiguousFiles: string[]; worksWithoutImage: string[]; noUnit: string[] }>()
   const [wordReview, setWordReview] = useState<{ report: MergeReport; flags: string[]; fixes: string[] }>()
   const initialExpansion = useRef(false)
   const spreadsheetInput = useRef<HTMLInputElement>(null)
@@ -352,9 +353,11 @@ export default function App() {
   const importImageFolder = async (files: FileList | null) => {
     if (!files?.length) return
     try {
-      const result = await catalogue.importImages([...files])
-      const unmatched = result.unmatched.length ? ` ${result.unmatched.length} unmatched: ${result.unmatched.slice(0, 5).join(', ')}${result.unmatched.length > 5 ? '…' : ''}` : ''
-      setImportNotice(`Matched and stored ${result.matched} local image${result.matched === 1 ? '' : 's'} for offline use.${unmatched}`)
+      const result = await catalogue.importImages([...files], catalogue.overrides)
+      const titles = new Map(artists.flatMap((artist) => artist.artworks.map((artwork) => [artwork.id, `${artist.firstName} ${artist.surname}: "${artwork.title}"`] as const)))
+      const noUnit = result.assignments.flatMap((assignment) => { const size = sizeFromFilenameDetailed(assignment.file.name); return size && !size.unitStated ? [`${titles.get(assignment.artworkId) ?? assignment.file.name} — ${size.value} (${assignment.file.name})`] : [] })
+      setImageReview({ ...result, noUnit })
+      setImportNotice(`Matched ${result.assignments.length} of ${files.length} image files to artworks and stored them on this device. Review the list below.`)
     } catch (caught) { window.alert(caught instanceof Error ? caught.message : 'Image import failed.') }
     finally { if (imagesInput.current) imagesInput.current.value = '' }
   }
@@ -422,6 +425,15 @@ export default function App() {
       {catalogue.error && <div className="error-banner"><AlertTriangle size={17} /><span>{catalogue.error} Cached data remains available.</span></div>}
       {catalogue.removedCount > 0 && <div className="change-banner"><CircleHelp size={17} />{catalogue.removedCount} previously seen artwork{catalogue.removedCount === 1 ? '' : 's'} no longer appear in the Sheet.</div>}
       {backupUrl && <div className="change-banner"><FileSpreadsheet size={17} />Google Sheet backup updated. <a href={backupUrl} target="_blank" rel="noreferrer">Open spreadsheet</a></div>}
+      {imageReview && <section className="word-review" aria-label="Image import review">
+        <header><AlertTriangle size={17} /><h2>Image import — please review</h2><button onClick={() => setImageReview(undefined)}>Dismiss</button></header>
+        <p>{imageReview.assignments.length} images matched · {imageReview.worksWithoutImage.length} works still without an image · {imageReview.unmatchedFiles.length + imageReview.ambiguousFiles.length} files not used</p>
+        <ReviewGroup title="Approximate matches to check" items={imageReview.approximate} note="Spelling differences between the filename and the catalogue title. Open the card to confirm the picture; use “Choose image manually” to change it." />
+        <ReviewGroup title="Works still without an image" items={imageReview.worksWithoutImage} />
+        <ReviewGroup title="Files not matched" items={[...imageReview.ambiguousFiles, ...imageReview.unmatchedFiles]} note="Attach these by hand with “Choose image manually” on the right card." />
+        <ReviewGroup title="Sizes without a unit" items={imageReview.noUnit} note="The filename gives numbers but no mm/cm. Shown as “unit not stated” — confirm with the artist or rename the file (e.g. …-102x98mm.jpg) and import again." />
+        <ReviewGroup title="Extra photos kept aside" items={imageReview.spares} note="Scale shots, framed shots and second photos of works that already have an image." />
+      </section>}
       {wordReview && <WordReviewPanel review={wordReview} onDismiss={() => setWordReview(undefined)} />}
       {importNotice && <div className="change-banner import-banner"><Check size={17} /><span>{importNotice}</span><button onClick={() => setImportNotice(undefined)} aria-label="Dismiss import message"><X size={15} /></button></div>}
 
@@ -445,9 +457,9 @@ export default function App() {
             <button onClick={() => spreadsheetInput.current?.click()}><FileUp size={14} />Import spreadsheet file</button>
             <input ref={spreadsheetInput} className="visually-hidden" type="file" accept=".csv,.tsv,.txt,.html,.htm,.xls,.xlsx,.xlsm,.xlsb,.ods,.fods" onChange={(event) => void importSpreadsheet(event.target.files?.[0])} />
             <button onClick={() => void importSheetLink()}><Link2 size={14} />Import Google Sheets link</button>
-            <button onClick={() => imagesInput.current?.click()}><FolderOpen size={14} />Import the images</button>
+            <button onClick={() => imagesInput.current?.click()}><FolderOpen size={14} />Import image folder</button>
             <input ref={imagesInput} className="visually-hidden" type="file" accept="image/*,.heic,.heif,.tif,.tiff" multiple onChange={(event) => void importImageFolder(event.target.files)} />
-            <small>Images are matched by spreadsheet filename, then artwork title, and stored on this device for offline use.</small>
+            <small>Choose the whole images folder (subfolders included). Images are matched by artist, then title, and stored on this device; sizes are read from the filenames.</small>
             <button className="scan-form-button" onClick={() => { setOcrDraft(blankEntry(entryType)); setOcrOpen(true) }}><Camera size={14} />Scan / add entry form</button>
           </div>
           <div className="view-panel">
@@ -555,7 +567,7 @@ export default function App() {
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
                             <p className="medium">{[artwork.medium || 'Medium not supplied', `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
-                            {(() => { const size = artworkSize(artwork); return <p className={`size ${size ? '' : 'size-missing'}`}><Ruler size={13} />{size ? <>{size.value}{size.source === 'image filename' && <span> · from image filename</span>}</> : 'Size not given'}</p> })()}
+                            {(() => { const size = artworkSize(artwork); return <p className={`size ${size ? '' : 'size-missing'}`}><Ruler size={13} />{size ? <><b>{size.value}</b>{size.source === 'image filename' && <span>from image filename{size.unitStated ? '' : ' — unit not stated'}</span>}</> : 'Size not given'}</p> })()}
                             <div className="section-toggle" role="group" aria-label={`Catalogue section for ${artwork.title || 'artwork'}`}>
                               <button className={!isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={!isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, false)}>Miniature painting</button>
                               <button className={isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, true)}>Sculpture</button>
