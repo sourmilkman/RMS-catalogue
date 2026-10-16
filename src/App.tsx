@@ -1,11 +1,12 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, Eye, EyeOff, ChevronDown, ChevronRight, CircleHelp, ClipboardCopy, Download, ExternalLink,
-  Camera, FileSpreadsheet, FileText, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
+  Camera, Ruler, FileSpreadsheet, FileText, FileUp, FolderOpen, ImageOff, KeyRound, Link2, Plus, RefreshCw, RotateCcw, Search, SlidersHorizontal, Trash2, X,
 } from 'lucide-react'
 import './App.css'
 import { useCatalogue } from './hooks/useCatalogue'
 import { EXPORT_FIELDS } from './lib/reconcile'
+import { artworkSize } from './lib/dimensions'
 import { capitaliseName } from './lib/names'
 import { exportBackupSheet, GOOGLE_CLIENT_ID, hasGoogleClientId, saveGoogleClientId } from './lib/googleSheets'
 import { fetchGoogleSheet, importDifference, parseSpreadsheetFile } from './lib/imports'
@@ -22,7 +23,7 @@ const FILTERS = [
   ['rms-member', 'RMS Members'], ['associate-member', 'Associate Members'], ['non-member', 'Non-members'],
   ['included', 'Included'], ['excluded', 'Excluded'], ['undecided', 'Undecided'],
   ['yes', 'Yes verdict'], ['maybe', 'Maybe verdict'], ['no', 'No verdict'], ['tie', 'Tie'],
-  ['young', 'Young Artist'], ['missing-image', 'Missing image'],
+  ['young', 'Young Artist'], ['missing-image', 'Missing image'], ['missing-size', 'No size yet'],
   ['missing-email', 'Missing email'], ['missing-votes', 'Missing votes'],
 ] as const
 const SECTION_VIEW: [CatalogueSectionKey, string][] = [['sculptures', 'Sculptures'], ['paintings', 'Miniature paintings'], ['young', 'Young Artists']]
@@ -110,6 +111,7 @@ function matchesArtworkFilters(
   if (verdictFilters.length && !verdictFilters.includes(artwork.verdict)) return false
   if (filters.has('young') && !youngArtist) return false
   if (filters.has('missing-image') && (artwork.imageUrl || artwork.localImage)) return false
+  if (filters.has('missing-size') && artworkSize(artwork)) return false
   if (filters.has('missing-email') && artist.email) return false
   if (filters.has('missing-votes') && artwork.votes.valid) return false
   return true
@@ -169,7 +171,7 @@ export default function App() {
       })
       if (artworks.length) return [{ artist, artworks }]
       if (artist.artworks.length || view.hideExcluded || view.hiddenSections.length) return []
-      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-votes']
+      const artworkOnlyFilters = ['included', 'excluded', 'undecided', 'yes', 'maybe', 'no', 'tie', 'missing-image', 'missing-size', 'missing-votes']
       const memberFilters = ['rms-member', 'associate-member', 'non-member'].filter((filter) => filters.has(filter))
       const sourceFiltersMatch = (!filters.has('young') || isYoungArtist) && (!filters.has('missing-email') || !artist.email) && (!memberFilters.length || memberFilters.includes(artist.membershipType ?? 'non-member'))
       return (!needle || artistMatches) && !artworkOnlyFilters.some((filter) => filters.has(filter)) && sourceFiltersMatch ? [{ artist, artworks }] : []
@@ -552,7 +554,8 @@ export default function App() {
                               <span className={`decision-label ${decision}`}>{decision}</span>
                             </div>
                             <h3>{artwork.title || 'Untitled artwork'}</h3>
-                            <p className="medium">{[artwork.medium || 'Medium not supplied', artwork.dimensions, `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
+                            <p className="medium">{[artwork.medium || 'Medium not supplied', `Artwork ${artwork.position}`].filter(Boolean).join(' · ')}</p>
+                            {(() => { const size = artworkSize(artwork); return <p className={`size ${size ? '' : 'size-missing'}`}><Ruler size={13} />{size ? <>{size.value}{size.source === 'image filename' && <span> · from image filename</span>}</> : 'Size not given'}</p> })()}
                             <div className="section-toggle" role="group" aria-label={`Catalogue section for ${artwork.title || 'artwork'}`}>
                               <button className={!isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={!isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, false)}>Miniature painting</button>
                               <button className={isSculpture(artwork, state) ? 'selected' : ''} aria-pressed={isSculpture(artwork, state)} onClick={() => catalogue.setSculpture(artwork.id, true)}>Sculpture</button>

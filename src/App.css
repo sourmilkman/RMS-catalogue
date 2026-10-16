@@ -67,3 +67,6 @@ h1 { margin: 0; font-family: Georgia, "Times New Roman", serif; font-size: clamp
 .group-heading { display: flex; align-items: baseline; gap: 10px; margin: 18px 2px 0; color: #e8d992; font-size: .82rem; letter-spacing: .09em; text-transform: uppercase; }
 .group-heading:first-child { margin-top: 0; }
 .group-heading span { color: #9fa9a7; font-size: .72rem; letter-spacing: 0; text-transform: none; }
+.size { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #dce1df; font-size: .78rem; font-weight: 650; }
+.size span { color: #9fa9a7; font-weight: 500; }
+.size-missing { color: #c9a96a; font-weight: 500; }

@@ -1,5 +1,6 @@
 import type { ArtistOverride, ArtistSubmission, ArtworkDecision } from '../types'
 import { awardLines, catalogueSections } from './exportCatalogueDocx'
+import { artworkSize } from './dimensions'
 
 /**
  * One row per catalogued artwork for the online exhibition, numbered exactly as the printed catalogue.
@@ -15,6 +16,7 @@ export interface WebsiteRow {
   title: string
   medium: string
   dimensions: string
+  sizeSource: string
   price: string
   imageUrl: string
   imageFile: string
@@ -23,7 +25,7 @@ export interface WebsiteRow {
   driveImageUrl?: string
 }
 
-export const WEBSITE_HEADER = ['Cat No', 'Section', 'First Name', 'Surname', 'Society Initials', 'Award', 'Title', 'Medium', 'Dimensions', 'Price (£)', 'Image Link', 'Image File']
+export const WEBSITE_HEADER = ['Cat No', 'Section', 'First Name', 'Surname', 'Society Initials', 'Award', 'Title', 'Medium', 'Size', 'Size Source', 'Price (£)', 'Image Link', 'Image File']
 const SECTION_LABEL = { 'sculptures': 'Sculpture', 'paintings': 'Miniature Painting', 'young-14-17': 'Young Artist (14–17)', 'young-18-30': 'Young Artist (18–30)', 'young-no-age': 'Young Artist (age not given)' } as const
 
 export function websiteRows(artists: ArtistSubmission[], decisions: Record<string, ArtworkDecision>, overrides: Record<string, ArtistOverride>): WebsiteRow[] {
@@ -31,6 +33,7 @@ export function websiteRows(artists: ArtistSubmission[], decisions: Record<strin
   return catalogueSections(artists, decisions, overrides).flatMap((section) => section.entries.flatMap((entry) => entry.artworks.map((item) => {
     const { artist, artwork } = byId.get(item.artworkId)!
     const override = overrides[artist.id]
+    const size = artworkSize(artwork)
     return {
       artworkId: artwork.id,
       catalogueNumber: item.number,
@@ -41,7 +44,8 @@ export function websiteRows(artists: ArtistSubmission[], decisions: Record<strin
       award: awardLines(override?.awardText).join(' / '),
       title: artwork.title,
       medium: artwork.medium ?? '',
-      dimensions: artwork.dimensions ?? '',
+      dimensions: size?.value ?? '',
+      sizeSource: size ? (size.source === 'given' ? 'Given' : 'From image filename') : '',
       price: item.price,
       imageUrl: artwork.imageUrl ?? '',
       imageFile: artwork.localImageName ?? '',
@@ -52,16 +56,16 @@ export function websiteRows(artists: ArtistSubmission[], decisions: Record<strin
 }
 
 export function websiteValues(row: WebsiteRow): string[] {
-  return [row.catalogueNumber, row.section, row.firstName, row.surname, row.initials, row.award, row.title, row.medium, row.dimensions, row.price, row.driveImageUrl || row.imageUrl, row.imageFile]
+  return [row.catalogueNumber, row.section, row.firstName, row.surname, row.initials, row.award, row.title, row.medium, row.dimensions, row.sizeSource, row.price, row.driveImageUrl || row.imageUrl, row.imageFile]
 }
 
 export async function downloadWebsiteWorkbook(rows: WebsiteRow[]): Promise<void> {
   const XLSX = await import('@e965/xlsx')
   const sheet = XLSX.utils.aoa_to_sheet([WEBSITE_HEADER, ...rows.map(websiteValues)])
-  sheet['!cols'] = [6, 18, 14, 16, 22, 24, 40, 40, 14, 10, 50, 28].map((wch) => ({ wch }))
+  sheet['!cols'] = [6, 20, 14, 16, 22, 24, 40, 40, 16, 18, 10, 50, 28].map((wch) => ({ wch }))
   rows.forEach((row, index) => {
     const link = row.driveImageUrl || row.imageUrl
-    const cell = sheet[XLSX.utils.encode_cell({ r: index + 1, c: 10 })]
+    const cell = sheet[XLSX.utils.encode_cell({ r: index + 1, c: 11 })]
     if (link && cell) cell.l = { Target: link }
   })
   const book = XLSX.utils.book_new()
